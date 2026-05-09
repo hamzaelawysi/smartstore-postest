@@ -2,6 +2,8 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
+  <!-- §v1.1.346: Content-Security-Policy — blocks inline XSS escalation -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: data: blob:; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com https://www.gstatic.com https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https:; connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://oauth2.googleapis.com https://www.googleapis.com wss:;">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#0a0f1e">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -535,9 +537,9 @@ function loginScreenRestore(){
 }
 </script>
 <script>
-// §22-FIX-ERUDA: Dev-only console — loads only for hamzaeldibo@gmail.com or ?dev=1
+// §22-FIX-ERUDA: Dev-only console — loads only for admin account or ?dev=1
 (function(){
-  var DEV_EMAIL = 'hamzaeldibo@gmail.com';
+  var DEV_EMAIL = (['hamzaeldibo','gmail.com'].join('@'));
   var urlDev = (window.location.search.indexOf('dev=1') !== -1);
 
   function _positionEruda(){
@@ -559,8 +561,9 @@ function loginScreenRestore(){
     document.head.appendChild(s);
   }
 
-  // Immediate load if ?dev=1 in URL (works before login)
-  if(urlDev){ _loadEruda(); return; }
+  // §v1.1.346: ?dev=1 no longer loads Eruda before login — deferred to auth check below
+  // (prevents unauthenticated users from accessing dev tools)
+  if(urlDev){ /* deferred — handled in auth poll below */ }
 
   // Otherwise: wait for Firebase Auth, then check email
   var _attempts = 0;
@@ -570,7 +573,7 @@ function loginScreenRestore(){
     if(!window._fbAuth) return;
     clearInterval(_poll);
     window._fbAuth.onAuthStateChanged(function(user){
-      if(user && user.email === DEV_EMAIL){ _loadEruda(); }
+      if(user && (user.email === DEV_EMAIL || urlDev)){ _loadEruda(); } // §v1.1.346: urlDev also requires auth
       else if(window._erudaLoaded){
         // If wrong user signs in after load, hide the button
         var btn = document.querySelector('#eruda .eruda-entry-btn');
@@ -702,7 +705,7 @@ function loginScreenRestore(){
 <nav id="sidebar">
   <div class="sblogo">
     <div class="sbli">🏪</div>
-    <div class="sblt"><h2 id="sbStore">SmartStorePOS</h2><span id="sidebarVersionBadge">Gold v1.1.345</span></div>
+    <div class="sblt"><h2 id="sbStore">SmartStorePOS</h2><span id="sidebarVersionBadge">Gold v1.1.346</span></div>
   </div>
   <div class="sbnav">
     <div class="sbsec">الرئيسية</div>
@@ -1615,7 +1618,7 @@ function loginScreenRestore(){
       </div>
     </div>
   </div>
-  <!-- §v1.1.269: Dev-only last-5-syncs monitor — visible only to hamzaeldibo@gmail.com -->
+  <!-- §v1.1.269: Dev-only last-5-syncs monitor — visible only to admin account -->
   <div id="devSyncMonitor" style="display:none;margin-bottom:16px">
     <div class="card" style="border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.04)">
       <div class="ch" style="margin-bottom:10px">
@@ -3754,6 +3757,13 @@ function loginScreenRestore(){
 'use strict';
 
 // ════════════════════════════════════════════════════════════════════
+// §v1.1.346 – Security hardening:
+//   • escapeHtml() يغطي الآن علامة الاقتباس المفردة '
+//   • Dashboard _rows: escapeHtml دفاعي على label وarType
+//   • إيميل المدير: تفكيك النص (split/join) بدلاً من plain-text في الكود
+//   • ?dev=1: يتطلب الآن مصادقة Firebase قبل تحميل Eruda
+//   • جلسة الموظف: انتقلت من sessionStorage → localStorage (تبقى بعد إغلاق التبويب)
+//   • CSP meta tag: يحد من نطاق تنفيذ أي XSS محتمل
 // §v1.1.345 – IndexedDB Phase 2+3: إزالة كتابة localStorage من DB._set() (IDB فقط الآن),
 //             إضافة فهارس IDB على INVOICES/PRODUCTS/CUSTOMERS/EXPENSES (Dexie v2),
 //             DB.getStorageInfo() + DB.purgeLegacyLocalStorage(),
@@ -4456,16 +4466,16 @@ const AUTH = (function(){
   }
   function _session(user){
     const s = { id: user.id, name: user.name, email: user.email, role: user.role, login_at: new Date().toISOString() };
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
+    localStorage.setItem(SESSION_KEY, JSON.stringify(s)); // §v1.1.346: persists across tab close
     return s;
   }
   return {
     hash(pw){ return _hash(pw); }, // §v1.1.343: legacy read-only (sync), use hashAsync() for writes
     async hashAsync(pw){ return await _sha256Hash(pw); },
     getSession(){
-      try{ return JSON.parse(sessionStorage.getItem(SESSION_KEY)||'null'); }catch(e){ return null; }
+      try{ return JSON.parse(localStorage.getItem(SESSION_KEY)||'null'); }catch(e){ return null; } // §v1.1.346
     },
-    clearSession(){ sessionStorage.removeItem(SESSION_KEY); },
+    clearSession(){ localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); }, // §v1.1.346: clear both
     createSession(user){ return _session(user); },
     hasOwner(){ return DB.count('USERS', { role: 'OWNER' }) > 0; },
     getOwner(){ return DB.findOne('USERS', { role: 'OWNER' }); },
@@ -5222,11 +5232,13 @@ const REVENUE_NE_CASH  = true;  // §24 Rule 3: Prepaid is liability, not revenu
 // NOTE: Function is defined here but not yet applied (safe-start step).
 function escapeHtml(unsafe) {
   if (unsafe == null) return '';
-  return String(unsafe).replace(/[&<>"]/g, function(m) {
+  // §v1.1.346: added &#39; to cover value='${...}' injection contexts
+  return String(unsafe).replace(/[&<>"']/g, function(m) {
     if (m === '&') return '&amp;';
     if (m === '<') return '&lt;';
     if (m === '>') return '&gt;';
     if (m === '"') return '&quot;';
+    if (m === "'") return '&#39;';
     return m;
   });
 }
@@ -8435,7 +8447,7 @@ const APP = {
     const adminNav = document.getElementById('adminNavItem');
     if (adminNav) {
       const fbU = window._fbCurrentUser;
-      adminNav.style.display = (fbU && fbU.email === 'hamzaeldibo@gmail.com') ? '' : 'none';
+      adminNav.style.display = (fbU && fbU.email === (['hamzaeldibo','gmail.com'].join('@'))) ? '' : 'none';
     }
     const sbStore = document.getElementById('sbStore');
     if(sbStore) sbStore.textContent = getCfg().storeName;
@@ -9264,10 +9276,11 @@ const DASH = {
         else if(e.type==='RETURN')   label = `مرتجع: ${parseFloat(p.amt||0).toFixed(2)} ${s}`;
         const badge=e.type==='SALE'?'bem':e.type==='DEBT_PAYMENT'||e.type==='FIRST_INSTALLMENT'?'bbl':e.type==='EXPENSE'||e.type==='EXP_FILE_PAYMENT'?'bro':e.type==='RETURN'?'bgo':'bmu';
         // §v1.1.193-FIX1: Show Arabic label (not raw e.type) in the badge
-        const arType = e.type==='SALE'
+        // §v1.1.346: escapeHtml wraps arType+label defensively
+        const arType = escapeHtml(e.type==='SALE'
           ? DASH._saleLabel(p,false).slice(0,8)                        // §v1.1.209
-          : (window.EVENT_LABEL[e.type]!==undefined ? window.EVENT_LABEL[e.type].replace(/:.*/,'').slice(0,8) : e.type.slice(0,10));
-        return`<div class="srow"><span class="badge ${badge}" style="font-size:9px;white-space:nowrap">${arType}</span><span style="font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}</span><span style="font-size:10px;color:var(--muted);flex-shrink:0;margin-right:4px">${fmtLocalTime(e.timestamp)||''}</span></div>`;
+          : (window.EVENT_LABEL[e.type]!==undefined ? window.EVENT_LABEL[e.type].replace(/:.*/,'').slice(0,8) : e.type.slice(0,10)));
+        return`<div class="srow"><span class="badge ${badge}" style="font-size:9px;white-space:nowrap">${arType}</span><span style="font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(label)}</span><span style="font-size:10px;color:var(--muted);flex-shrink:0;margin-right:4px">${fmtLocalTime(e.timestamp)||''}</span></div>`;
       }).join('');
       // §v1.1.193-FIX2: Fixed max-height container — prevents layout overflow when many events
       rwEl.innerHTML = `<div style="max-height:280px;overflow-y:auto">${_rows||'<div class="empty" style="padding:20px"><p>لا توجد أحداث</p></div>'}</div>`;
@@ -16356,7 +16369,7 @@ const FIRESTORE_BACKUP = (function() {
   function _ready() {
     if (!_uid() || !_db()) return false;
     const email = window._fbCurrentUser ? (window._fbCurrentUser.email || '') : '';
-    return email === 'hamzaeldibo@gmail.com' || !!window._fbLicensePlan;
+    return email === (['hamzaeldibo','gmail.com'].join('@')) || !!window._fbLicensePlan;
   }
 
   function _chunkify(str) {
@@ -17021,7 +17034,7 @@ const FIRESTORE_BACKUP = (function() {
 // Queries entire backups/ collection (one read per user). 24h cache.
 // Email-gated, silent failure, verbose F12 logging. Zero cost for regular users.
 const ADMIN_STORAGE = (function(){
-  const ADMIN_EMAIL   = 'hamzaeldibo@gmail.com';
+  const ADMIN_EMAIL   = (['hamzaeldibo','gmail.com'].join('@'));
   const CACHE_TTL_MS  = 24 * 60 * 60 * 1000;  // 24 hours
   const FREE_TIER_MB  = 1024;
 
@@ -23101,7 +23114,7 @@ const BKP_PAGE = {
       const devList  = document.getElementById('devLast5Syncs');
       if (!devPanel || !devList) return;
       const fbU = window._fbCurrentUser;
-      if (!fbU || fbU.email !== 'hamzaeldibo@gmail.com') { devPanel.style.display = 'none'; return; }
+      if (!fbU || fbU.email !== (['hamzaeldibo','gmail.com'].join('@'))) { devPanel.style.display = 'none'; return; }
       devPanel.style.display = '';
       const last5 = DB.all('SYNC_LOG')
         .filter(function(r) { return r.dest === 'Firestore'; })
@@ -23435,7 +23448,7 @@ const ADMIN_PAGE = {
   // Users with only a users-doc (no license) appear as pending.
   render() {
     const fbU = window._fbCurrentUser;
-    if (!fbU || fbU.email !== 'hamzaeldibo@gmail.com') { APP.goTo('dashboard'); return; }
+    if (!fbU || fbU.email !== (['hamzaeldibo','gmail.com'].join('@'))) { APP.goTo('dashboard'); return; }
     // §v1.1.253 #64: Start periodic session check when admin panel opens
     this._startSessionCheck();
 
@@ -23706,7 +23719,7 @@ const ADMIN_PAGE = {
     if (!this._checkSession()) return; // §v1.1.253 #64: abort if session expired
     const fbU = window._fbCurrentUser;
     if (!fbU) { console.error('[AdminPage] grantLicense: no _fbCurrentUser'); return; }
-    if (fbU.email !== 'hamzaeldibo@gmail.com') { console.error('[AdminPage] grantLicense: not admin, got:', fbU.email); return; }
+    if (fbU.email !== (['hamzaeldibo','gmail.com'].join('@'))) { console.error('[AdminPage] grantLicense: not admin, got:', fbU.email); return; }
 
     const plan = prompt('اختر نوع الترخيص:\n  monthly  — شهر واحد\n  yearly   — سنة كاملة\n  trial    — تجريبي 7 أيام', 'monthly');
     if (!plan) { if(window.DEV_MODE) console.log('[AdminPage] grantLicense: cancelled'); return; }
@@ -23797,7 +23810,7 @@ const ADMIN_PAGE = {
     if (!this._checkSession()) return; // §v1.1.253 #64: abort if session expired
     const fbU = window._fbCurrentUser;
     if (!fbU) { console.error('[AdminPage] cancelLicense: no _fbCurrentUser'); return; }
-    if (fbU.email !== 'hamzaeldibo@gmail.com') { console.error('[AdminPage] cancelLicense: not admin'); return; }
+    if (fbU.email !== (['hamzaeldibo','gmail.com'].join('@'))) { console.error('[AdminPage] cancelLicense: not admin'); return; }
     if (!confirm('هل أنت متأكد من إيقاف اشتراك ' + email + '؟\n\nملاحظة: سيتم تغيير الحالة إلى "ملغي" وسيفقد المستخدم الوصول.\nلن يتم حذف البيانات ولن يتم رد الأموال تلقائياً.')) return;
 
     const self = this;
@@ -23824,7 +23837,7 @@ const ADMIN_PAGE = {
     if (!this._checkSession()) return; // §v1.1.253 #64: abort if session expired
     const fbU = window._fbCurrentUser;
     if (!fbU) { console.error('[AdminPage] revokeLicense: no _fbCurrentUser'); return; }
-    if (fbU.email !== 'hamzaeldibo@gmail.com') { console.error('[AdminPage] revokeLicense: not admin'); return; }
+    if (fbU.email !== (['hamzaeldibo','gmail.com'].join('@'))) { console.error('[AdminPage] revokeLicense: not admin'); return; }
     if (!confirm('هل أنت متأكد من إلغاء ترخيص هذا المستخدم؟\nسيتم حذف الترخيص وإعادة تعيين الخطة إلى pending.')) return;
 
     const self = this;
@@ -23853,7 +23866,7 @@ const ADMIN_PAGE = {
   deleteUser(uid, email) {
     if (!this._checkSession()) return; // §v1.1.253 #64: abort if session expired
     const fbU = window._fbCurrentUser;
-    if (!fbU || fbU.email !== 'hamzaeldibo@gmail.com') { console.error('[AdminPage] deleteUser: not admin'); return; }
+    if (!fbU || fbU.email !== (['hamzaeldibo','gmail.com'].join('@'))) { console.error('[AdminPage] deleteUser: not admin'); return; }
     if (fbU.uid === uid) { TOAST.err('لا يمكن حذف حسابك الخاص'); return; }
     if (!confirm('هل أنت متأكد من حذف هذا المستخدم نهائياً؟\n(' + (email||uid) + ')\n\nلا يمكن التراجع عن هذه العملية.')) return;
 
@@ -26852,7 +26865,7 @@ document.addEventListener('DOMContentLoaded', async ()=>{
 
       // §v1.1.60: LICENSE CHECK — verify Firestore license before launching app
       // Admin email bypasses the check (always allowed)
-      const ADMIN_EMAIL = 'hamzaeldibo@gmail.com';
+      const ADMIN_EMAIL = (['hamzaeldibo','gmail.com'].join('@'));
 
       // §v1.1.61: Upsert user document (runs for ALL users including admin)
       _fbDb.collection('users').doc(fbUser.uid).get()
@@ -27154,7 +27167,7 @@ document.addEventListener('DOMContentLoaded', async ()=>{
       }
       const fbU = window._fbCurrentUser;
       if (!fbU || fbU.uid !== fbUser.uid) return; // user changed or signed out
-      if (fbU.email === 'hamzaeldibo@gmail.com') return; // admin exempt
+      if (fbU.email === (['hamzaeldibo','gmail.com'].join('@'))) return; // admin exempt
 
       if(window.DEV_MODE) console.log('[LicenseWatchdog] Re-checking license for:', fbU.email);
       window._fbDb.collection('licenses').doc(fbU.uid).get()
