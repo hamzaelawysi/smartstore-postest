@@ -364,165 +364,7 @@ select option{background:var(--card)}
 #page-admin .tw table th:last-child,
 #page-admin .tw table td:last-child { width:120px; text-align:center; white-space:nowrap; }
 </style>
-  <!-- §7 v10.5: coi-serviceworker — enables SQLite+OPFS via file:// without local server -->
-  <script>
-    // coi-serviceworker inline (v0.1.7 logic adapted for single-HTML use)
-    // Injects COOP/COEP headers via Service Worker for SharedArrayBuffer support
-    (function(){
-      if(typeof window==='undefined') return;
-      // Only register SW if not already active and we're in a context that supports it
-      if(!('serviceWorker' in navigator)) return;
-      const SW_SCRIPT = `
-        self.addEventListener('install', e => self.skipWaiting());
-        self.addEventListener('activate', e => e.waitUntil(clients.claim()));
-        self.addEventListener('fetch', function(e){
-          e.respondWith(
-            fetch(e.request).then(function(r){
-              if(r.status===0) return r;
-              const h = new Headers(r.headers);
-              h.set('Cross-Origin-Opener-Policy','same-origin');
-              h.set('Cross-Origin-Embedder-Policy','require-corp');
-              return new Response(r.body, {status:r.status, statusText:r.statusText, headers:h});
-            }).catch(()=>fetch(e.request))
-          );
-        });
-      `;
-      try{
-        const blob = new Blob([SW_SCRIPT], {type:'application/javascript'});
-        const url = URL.createObjectURL(blob);
-        navigator.serviceWorker.register(url).then(reg=>{
-          if(window.DEV_MODE) console.log('[COI-SW] Registered:', reg.scope);
-          if(reg.active) return;
-          // Reload once to activate COOP/COEP headers
-          if(!sessionStorage.getItem('coi_reload')){
-            sessionStorage.setItem('coi_reload','1');
-            setTimeout(()=>location.reload(), 200);
-          }
-        }).catch(e=>console.warn('[COI-SW] Registration failed:', e));
-      }catch(e){ console.warn('[COI-SW] SW init failed:', e); }
-    })();
-  </script>
-
-  <!-- §6.1 v10.5: Decimal.js — lightweight decimal arithmetic for financial precision -->
-  <script>
-    // §v1.1.92: DEV_MODE flag — set to false for production (suppresses all console.log)
-    window.DEV_MODE = false;
-    // §v1.1.249: DECIMAL_PRECISION removed — was never called anywhere in the codebase.
-    // Integer-cents engine (_toCents/_fromCents/_mulCents) is used directly throughout.
-  </script>
-
-  <!-- §7.2 v10.5: SQLite WASM — async secondary storage for advanced queries -->
-  <script>
-    // SQLite is loaded asynchronously and used as READ-ONLY reporting layer
-    // Primary storage remains localStorage/IndexedDB unchanged
-    window.SQLITE_DB = null;
-    window.SQLITE_READY = false;
-    window.SQLITE_STATUS = 'pending';
-
-    async function initSQLite(){
-      try{
-        // Try loading SQLite WASM from CDN
-        const src = 'https://cdn.jsdelivr.net/npm/@sqlite.org/sqlite-wasm@3.46.0-build1/sqlite-wasm/jswasm/sqlite3.mjs';
-        const mod = await import(src).catch(()=>null);
-        if(!mod){ window.SQLITE_STATUS='unavailable'; return; }
-        const sqlite3 = await mod.default().catch(()=>null);
-        if(!sqlite3){ window.SQLITE_STATUS='init-failed'; return; }
-
-        // Use in-memory DB (OPFS requires SharedArrayBuffer from coi-serviceworker)
-        const useOPFS = typeof SharedArrayBuffer !== 'undefined';
-        if(useOPFS && sqlite3.oo1?.OpfsDb){
-          window.SQLITE_DB = new sqlite3.oo1.OpfsDb('/smartstore_pos.db');
-          window.SQLITE_STATUS = 'opfs';
-        } else {
-          window.SQLITE_DB = new sqlite3.oo1.DB(':memory:','c');
-          window.SQLITE_STATUS = 'memory';
-        }
-        await createSQLiteSchema();
-        window.SQLITE_READY = true;
-        if(window.DEV_MODE) console.log('[SQLite] Ready — mode:', window.SQLITE_STATUS);
-      }catch(e){
-        window.SQLITE_STATUS = 'error:'+e.message;
-        console.warn('[SQLite] Init failed (non-critical):', e.message);
-      }
-    }
-
-    async function createSQLiteSchema(){
-      if(!window.SQLITE_DB) return;
-      const db = window.SQLITE_DB;
-      try{
-        db.exec(`
-          CREATE TABLE IF NOT EXISTS invoices(id TEXT PRIMARY KEY, num TEXT, customer TEXT, total REAL, paid REAL, remain REAL, payType TEXT, date TEXT, status TEXT, items TEXT);
-          CREATE TABLE IF NOT EXISTS debts(id TEXT PRIMARY KEY, customer TEXT, invNum TEXT, total REAL, paid REAL, remain REAL, status TEXT, lastPay TEXT);
-          CREATE TABLE IF NOT EXISTS returns_t(id TEXT PRIMARY KEY, customer TEXT, inv TEXT, amt REAL, method TEXT, date TEXT, items TEXT);
-          CREATE TABLE IF NOT EXISTS payments(id TEXT PRIMARY KEY, customer TEXT, invNum TEXT, amt REAL, timestamp TEXT, method TEXT);
-          CREATE TABLE IF NOT EXISTS customers(id TEXT PRIMARY KEY, name TEXT, code TEXT, phone TEXT, balance REAL DEFAULT 0);
-          CREATE INDEX IF NOT EXISTS idx_inv_cust ON invoices(customer);
-          CREATE INDEX IF NOT EXISTS idx_debt_cust ON debts(customer);
-        `);
-      }catch(e){ console.warn('[SQLite] Schema error:', e.message); }
-    }
-
-    // Sync a single record to SQLite (called after IndexedDB writes)
-    window.SQLITE_SYNC = {
-      invoice(inv){
-        if(!window.SQLITE_READY||!window.SQLITE_DB) return;
-        try{
-          window.SQLITE_DB.exec({sql:`INSERT OR REPLACE INTO invoices VALUES(?,?,?,?,?,?,?,?,?,?)`,
-            bind:[inv.id,inv.num,inv.customer,parseFloat(inv.total||0),parseFloat(inv.paid||0),parseFloat(inv.remain||0),inv.payType||'',inv.date||'',inv.status||'',inv.items||'[]']});
-        }catch(_){}
-      },
-      debt(d){
-        if(!window.SQLITE_READY||!window.SQLITE_DB) return;
-        try{
-          window.SQLITE_DB.exec({sql:`INSERT OR REPLACE INTO debts VALUES(?,?,?,?,?,?,?,?)`,
-            bind:[d.id,d.customer,d.invNum||'',parseFloat(d.total||0),parseFloat(d.paid||0),parseFloat(d.remain||0),d.status||'',d.lastPay||'']});
-        }catch(_){}
-      },
-      // Bulk migrate all IndexedDB data to SQLite (one-time)
-      migrateAll(){
-        if(!window.SQLITE_READY||!window.SQLITE_DB) return Promise.resolve(0);
-        return new Promise(resolve=>{
-          try{
-            let count=0;
-            // §v1.1.233: use DB.all() abstraction instead of direct localStorage access
-            // (safe: migrateAll is only called after window 'load', by which time DB is defined)
-            ['INVOICES','DEBTS','RETURNS','CUSTOMERS'].forEach(tbl=>{
-              try{
-                const rows = DB.all(tbl);
-                rows.forEach(r=>{
-                  try{
-                    if(tbl==='INVOICES') window.SQLITE_SYNC.invoice(r);
-                    else if(tbl==='DEBTS') window.SQLITE_SYNC.debt(r);
-                    count++;
-                  }catch(_){}
-                });
-              }catch(_){}
-            });
-            if(window.DEV_MODE) console.log('[SQLite] Migration complete —', count, 'records synced');
-            resolve(count);
-          }catch(e){ console.warn('[SQLite] Migration error:', e); resolve(0); }
-        });
-      },
-      // Advanced query helper for reports
-      query(sql, params=[]){
-        if(!window.SQLITE_READY||!window.SQLITE_DB) return [];
-        try{
-          const rows=[];
-          window.SQLITE_DB.exec({sql, bind:params, rowMode:'object', callback:r=>rows.push(r)});
-          return rows;
-        }catch(e){ console.warn('[SQLite] Query error:', e.message); return []; }
-      }
-    };
-
-    // Auto-init SQLite after page load (non-blocking)
-    if(typeof window!=='undefined'){
-      window.addEventListener('load', ()=>{
-        setTimeout(()=>initSQLite().then(()=>{
-          if(window.SQLITE_READY) window.SQLITE_SYNC.migrateAll();
-        }), 1500);
-      });
-    }
-  </script>
+  <!-- §v1.1.346: Stage 4 — COI-serviceworker and SQLite WASM blocks removed (dead code) -->
 
 <script>
 // §v1.1.80: Early binding — loginScreenRestore defined here so HTML buttons
@@ -1604,6 +1446,7 @@ function loginScreenRestore(){
           <button class="btn bmu bsm" id="rebuildHashBtn" style="display:none" onclick="BKP_PAGE.rebuildHashChain()"><i class="fa-solid fa-rotate"></i>إعادة بناء</button>
         </div>
       </div>
+
     </div>
   </div>
   <!-- §v1.1.269: Dev-only last-5-syncs monitor — visible only to hamzaeldibo@gmail.com -->
@@ -1617,6 +1460,16 @@ function loginScreenRestore(){
       <div id="devLast5Syncs" style="display:flex;flex-direction:column;gap:6px">
         <div style="text-align:center;padding:18px;color:var(--muted);font-size:12px">لا توجد مزامنات مسجّلة بعد</div>
       </div>
+    </div>
+  </div>
+  <!-- §v1.1.345: Stage 3 — Storage monitor card -->
+  <div class="card" style="margin-bottom:16px" id="storageMonitorCard">
+    <div class="ch">
+      <div class="ct"><i class="fa-solid fa-hard-drive" style="color:#8b5cf6"></i>مساحة التخزين</div>
+      <button class="btn bgh bic bsm" onclick="BKP_PAGE.refreshStorageMonitor()" title="تحديث"><i class="fa-solid fa-rotate fa-xs"></i></button>
+    </div>
+    <div id="storageMonitorBody" style="padding:4px 2px">
+      <div style="text-align:center;color:var(--muted);font-size:12px">جارِ التحميل…</div>
     </div>
   </div>
   <!-- §v1.1.262: Firestore sync log card -->
@@ -3763,19 +3616,10 @@ const DB = (function(){
     }catch(e){ console.warn('[IDB] _writeToIDB error:', e); }
   }
 
+  // §v1.1.346 Stage 4: IDB + _mem only — localStorage writes fully removed
   function _set(t,d){
-    _mem[t] = d; // instant synchronous update
-    _writeToIDB(t, d); // async background write — fire-and-forget
-    try {
-      localStorage.setItem(NS+t, JSON.stringify(d));
-    } catch(e) {
-      if(e.name==='QuotaExceededError'||e.code===22||e.code===1014) {
-        console.error('localStorage QuotaExceededError:', e);
-        alert('⚠️ تجاوز سعة التخزين المحلي.\nالرجاء حذف بعض النسخ الاحتياطية القديمة أو تصدير البيانات وتحرير مساحة.');
-      } else {
-        console.error('localStorage write failed:', e);
-      }
-    }
+    _mem[t] = d;      // synchronous in-memory update (instant)
+    _writeToIDB(t, d); // async background persist to IndexedDB
   }
   function _id(){ return 'id_'+Date.now()+'_'+Math.random().toString(36).slice(2,7); }
   return {
@@ -3868,10 +3712,10 @@ const DB = (function(){
       _set(table, [...existing, ...toInsert]);
     },
 
-    // ── Stage 1: expose _mem for debug / IDB population ──────────────────
+    // ── expose _mem for debug / IDB population ────────────────────────────
     get _mem(){ return _mem; },
 
-    // ── Stage 1: initIDB ─────────────────────────────────────────────────
+    // ── Stage 4: initIDB — fire-and-forget background initialisation ─────
     async initIDB(){
       if(window._idbFailed){ console.log('[IDB] skipped — already failed'); return; }
       try{
@@ -3879,28 +3723,48 @@ const DB = (function(){
         if(!ok){ window._idbFailed=true; console.warn('[IDB] Not supported — using localStorage only'); return; }
 
         await window.IDB_ENGINE.open();
-        console.log('[IDB] DB opened');
+        console.log('[IDB] DB opened (schema v2)');
 
         // One-time migration from localStorage → IndexedDB
         await window.IDB_ENGINE.migrate();
 
-        // Populate _mem from IndexedDB (fixes empty-pages issue)
+        // §Stage 4 safety-net: rescue any remaining un-migrated localStorage tables
         const tables = ['USERS','OPS_LOG','PRODUCTS','INVOICES','RETURNS','EXPENSES','EXPENSE_FILES',
           'EXPENSE_ENTRIES','DEBTS','SUPPLIERS','PURCHASE_INVOICES','SUPPLIER_PAYMENTS',
           'PURCHASE_RETURNS','SUPPLIER_CREDITS','BACKUPS','SYNC_LOG','CATEGORIES','SETTINGS',
           'CUSTOMERS','CUSTOMER_CREDITS','INVENTORY_MOVEMENTS','NOTES'];
+        let rescued = 0;
+        for(const t of tables){
+          try{
+            const raw = localStorage.getItem(NS+t);
+            if(raw){
+              const idbRows = await window.IDB_ENGINE.readTable(t);
+              if(idbRows.length === 0){
+                const lsRows = JSON.parse(raw);
+                if(Array.isArray(lsRows) && lsRows.length > 0){
+                  await window.IDB_ENGINE.writeTable(t, lsRows);
+                  rescued++;
+                  console.log('[IDB] Safety-net rescued:', t, lsRows.length, 'rows');
+                }
+              }
+              localStorage.removeItem(NS+t); // remove legacy key either way
+            }
+          }catch(e){ console.warn('[IDB] safety-net error for', t, e); }
+        }
+        if(rescued > 0) console.log('[IDB] Safety-net:', rescued, 'tables rescued');
+
+        // Populate _mem from IndexedDB
         for(const t of tables){
           try{
             const rows = await window.IDB_ENGINE.readTable(t);
             if(rows && rows.length > 0) _mem[t] = rows;
-            // If IDB has nothing, _mem stays unpopulated → _get() will fall back to localStorage on first read
           }catch(e){ console.warn('[IDB] readTable failed:', t, e); }
         }
         window.IDB_ENGINE._ready = true;
-        console.log('[IDB] Stage 1 ready. _mem tables loaded:', Object.keys(_mem).length);
+        console.log('[IDB] Stage 4 ready. _mem tables:', Object.keys(_mem).length);
       }catch(e){
         window._idbFailed = true;
-        console.warn('[IDB] initIDB failed — falling back to localStorage:', e);
+        console.warn('[IDB] initIDB failed — falling back to localStorage reads:', e);
       }
     }
   };
@@ -3909,7 +3773,7 @@ const DB = (function(){
 // ── Stage 1: IDB_ENGINE ──────────────────────────────────────────────────────
 window.IDB_ENGINE = (function(){
   const DB_NAME = 'SmartStorePOS';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2; // §Stage 3: bumped for index additions
   const ALL_TABLES = ['USERS','OPS_LOG','PRODUCTS','INVOICES','RETURNS','EXPENSES','EXPENSE_FILES',
     'EXPENSE_ENTRIES','DEBTS','SUPPLIERS','PURCHASE_INVOICES','SUPPLIER_PAYMENTS',
     'PURCHASE_RETURNS','SUPPLIER_CREDITS','BACKUPS','SYNC_LOG','CATEGORIES','SETTINGS',
@@ -3923,10 +3787,22 @@ window.IDB_ENGINE = (function(){
   async function open(){
     if(_db) return _db;
     const dex = new Dexie(DB_NAME);
-    // All stores use 'id' as primary key (++ = auto-increment not needed since we supply id)
-    const schema = {};
-    ALL_TABLES.forEach(t => { schema[t] = 'id'; });
-    dex.version(DB_VERSION).stores(schema);
+
+    // v1 — base schema: all tables keyed by 'id' (must be declared for upgrade path)
+    const schemaV1 = {};
+    ALL_TABLES.forEach(t => { schemaV1[t] = 'id'; });
+    dex.version(1).stores(schemaV1);
+
+    // v2 — Stage 3: adds indexes for common query patterns (non-breaking, additive only)
+    // Dexie syntax: 'primaryKey, index1, index2' — existing data is preserved automatically
+    const schemaV2 = Object.assign({}, schemaV1, {
+      INVOICES:  'id, date, customer',   // filter by date range or customer name
+      PRODUCTS:  'id, cat, code',        // filter by category or barcode/code
+      CUSTOMERS: 'id, name',             // lookup by name
+      EXPENSES:  'id, date',             // filter by date range
+    });
+    dex.version(2).stores(schemaV2);
+
     await dex.open();
     _db = dex;
     return _db;
@@ -4924,7 +4800,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.343'; // §v1.1.343: IndexedDB Stage 1 — in-memory cache (_mem), dual write (IDB + localStorage), safe fallback, splash boot, fixed empty pages; §v1.1.324: Added font color selector (7 colors: أبيض/رصاصي/ذهبي/أخضر/وردي/برتقالي/أسود) in sidebar theme controls, saved in localStorage; §v1.1.323: Added light/dark mode + 6 accent colors
+const APP_VERSION    = '1.1.346'; // §v1.1.346: IndexedDB Stage 4 (final) — removed localStorage writes, COI-SW & SQLite dead code, splash/watchdog boot; IDB is sole store with _mem cache and localStorage read fallback; safety-net migration on every boot; §v1.1.345: IndexedDB Stage 3 — schema v2 indexes, storage monitor
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
 // §v1.1.296: Stage 4 – End of Day Summary PDF and CSV exports (full content)
@@ -22742,6 +22618,8 @@ const BKP_PAGE = {
     const kpiEl=document.getElementById('bkpKPIs');
     if(kpiEl) kpiEl.innerHTML=`<div class="kpi kgr"><div class="ki"><i class="fa-solid fa-circle-check"></i></div><div class="kv2">${bkps.filter(b=>b.status==='ناجح').length}</div><div class="klbl">نسخ ناجحة</div></div><div class="kpi kb"><div class="ki"><i class="fa-solid fa-database"></i></div><div class="kv2">${prods+invs+exps}</div><div class="klbl">إجمالي السجلات</div></div><div class="kpi kg"><div class="ki"><i class="fa-solid fa-list-check"></i></div><div class="kv2">${evts}</div><div class="klbl">إجمالي الأحداث</div></div><div class="kpi ${connected?'kg':'kv'}"><div class="ki"><i class="fa-brands fa-google-drive"></i></div><div class="kv2" style="font-size:12px">${connected?'✓ متصل':'غير متصل'}</div><div class="klbl">Google Drive</div></div>`;
     DRIVE_SYNC.updateUI();
+    // §v1.1.345: Refresh storage monitor on every render
+    this.refreshStorageMonitor();
     const tb=document.getElementById('bkpTbody');
     if(tb) tb.innerHTML=bkps.map(b=>`<tr><td style="font-family:monospace;font-size:10.5px">${escapeHtml(b.name||'')}</td><td style="font-size:11px">${fmtLocalDateTime(b.created_at)||'—'}</td><td>${escapeHtml(b.by||'')}</td><td><span class="badge ${b.type==='JSON'?'bbl':'bgo'}">${b.type}</span></td><td>${b.location}</td><td style="font-size:10.5px;color:var(--muted)">جميع الجداول</td><td style="font-size:11px">${typeof b.size==='number'?(b.size/1024).toFixed(1)+' KB':b.size||'—'}</td><td><span class="badge ${b.status==='ناجح'?'bem':'bro'}">${b.status}</span></td><td><button class="btn bgh bic bsm" onclick="BKP_PAGE.quickExport()"><i class="fa-solid fa-download fa-xs"></i></button></td></tr>`).join('')||'<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--muted)">لا توجد نسخ احتياطية</td></tr>';
     UI.updateCloudStatus();
@@ -22821,6 +22699,41 @@ const BKP_PAGE = {
     const _cfg = getCfg();
     const pin = (_cfg.pinEnabled === true && _cfg.pin) ? (prompt('أدخل PIN:')||'') : '';
     BACKUP.exportCSV(table,pin);
+  },
+
+  // §v1.1.345: Stage 3 — Storage usage monitor
+  refreshStorageMonitor(){
+    const el = document.getElementById('storageMonitorBody');
+    if(!el) return;
+    if(!navigator.storage || !navigator.storage.estimate){
+      el.innerHTML = '<p style="color:var(--muted);font-size:12px;text-align:center">غير مدعوم في هذا المتصفح</p>';
+      return;
+    }
+    el.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:12px">جارِ التحميل…</div>';
+    navigator.storage.estimate().then(est => {
+      const used  = est.usage  || 0;
+      const total = est.quota  || 0;
+      const pct   = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+      const usedMB  = (used  / 1048576).toFixed(2);
+      const totalMB = (total / 1048576).toFixed(2);
+      const barColor = pct >= 80 ? 'var(--red)' : pct >= 60 ? '#f59e0b' : 'var(--green)';
+      const warn = pct >= 80
+        ? '<div style="margin-top:8px;font-size:11.5px;color:var(--red);font-weight:600">⚠️ مساحة التخزين تقترب من الامتلاء. يُنصح بتصدير البيانات وتنظيف السجلات القديمة.</div>'
+        : '';
+      el.innerHTML =
+        '<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--txt2);margin-bottom:6px">' +
+          '<span>المستخدم: <strong style="color:var(--txt)">' + usedMB + ' MB</strong></span>' +
+          '<span>' + pct.toFixed(1) + '%</span>' +
+          '<span>الإجمالي: <strong style="color:var(--txt)">' + totalMB + ' MB</strong></span>' +
+        '</div>' +
+        '<div style="background:var(--bdr);border-radius:6px;height:10px;overflow:hidden">' +
+          '<div style="width:' + pct.toFixed(1) + '%;height:100%;background:' + barColor + ';border-radius:6px;transition:width .3s"></div>' +
+        '</div>' +
+        warn;
+    }).catch(e => {
+      el.innerHTML = '<p style="color:var(--muted);font-size:12px;text-align:center">تعذّر جلب بيانات التخزين</p>';
+      console.warn('[IDB] storage.estimate() failed:', e);
+    });
   },
 
   // ── Preview/validate a backup file before restore ──
@@ -26410,32 +26323,12 @@ const NOTES_PAGE = {
 function noteSave(){ NOTES_PAGE.save(); } // §7 wrapper
 
 // ── BOOT ──
-document.addEventListener('DOMContentLoaded', async ()=>{
-  // Stage 1: Show splash while IndexedDB initialises
-  const splash = document.createElement('div');
-  splash.id = 'idb-splash';
-  splash.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;'
-    +'justify-content:center;background:#111;color:#f5c518;font-size:1.3rem;'
-    +'font-family:sans-serif;direction:rtl;letter-spacing:.03em;';
-  splash.textContent = 'جارِ التحميل…';
-  document.body.appendChild(splash);
-
-  // Watchdog: if initIDB takes > 3 s, boot anyway
-  let idbDone = false;
-  const watchdog = setTimeout(()=>{
-    if(!idbDone){
-      console.warn('[IDB] watchdog fired — booting without IDB');
-      window._idbFailed = true;
-    }
-  }, 3000);
-
-  try{ await DB.initIDB(); }catch(e){ window._idbFailed=true; console.warn('[IDB] boot initIDB error:', e); }
-  idbDone = true;
-  clearTimeout(watchdog);
-
-  splash.remove();
+// §v1.1.346 Stage 4: initIDB runs in the background — fast enough that _mem
+// is populated before the user navigates to any data page.
+document.addEventListener('DOMContentLoaded', ()=>{
+  DB.initIDB().catch(e => console.warn('[IDB] background init error:', e));
   APP.boot();
-  // Auto run system test after 2 seconds on first load
+  // Auto run system test silently after 2 seconds
   // §v1.1.181: run silently at startup (silent=true → no toast on auto-boot)
   setTimeout(()=>{ try{ SYSTEM_TEST.run(true); }catch(e){ /* test skipped silently — non-critical */ } }, 2000);
 });
