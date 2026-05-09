@@ -3877,11 +3877,11 @@ const DB = (function(){
     // §v1.1.343: initIDB — opens IndexedDB, runs one-time migration, hydrates _mem
     // Called once during boot (before APP.boot). Safe to call even if IDB unavailable.
     async initIDB() {
+      // §v1.1.343-FIX: Stage 1 — IDB open + one-time migration only.
+      // _mem is a lazy localStorage read-cache; hydrating _mem from IDB is deferred to Stage 2+.
+      // Reason: IDB readTable after migrate() could return a stale snapshot and overwrite
+      // _mem with data older than what APP.boot() already rendered from localStorage.
       if (window._idbFailed) { console.log('[IDB] Skipped — already marked failed'); return; }
-      const ALL_TABLES = ['USERS','OPS_LOG','PRODUCTS','INVOICES','RETURNS','EXPENSES',
-        'EXPENSE_FILES','EXPENSE_ENTRIES','DEBTS','SUPPLIERS','PURCHASE_INVOICES',
-        'SUPPLIER_PAYMENTS','PURCHASE_RETURNS','SUPPLIER_CREDITS','BACKUPS','SYNC_LOG',
-        'CATEGORIES','SETTINGS','CUSTOMERS','CUSTOMER_CREDITS','INVENTORY_MOVEMENTS','NOTES'];
       try {
         if (!window.IDB_ENGINE || !window.IDB_ENGINE.isSupported()) {
           throw new Error('IndexedDB not available in this environment');
@@ -3890,23 +3890,10 @@ const DB = (function(){
         await window.IDB_ENGINE.open();
         console.log('[IDB] Running one-time migration check…');
         await window.IDB_ENGINE.migrate();
-        console.log('[IDB] Hydrating _mem from IndexedDB…');
-        for (const t of ALL_TABLES) {
-          try {
-            const rows = await window.IDB_ENGINE.readTable(t);
-            // Only hydrate if IDB has data; otherwise localStorage _get() fills _mem lazily
-            if (rows && rows.length > 0) {
-              _mem[t] = rows;
-            }
-          } catch(e) {
-            console.warn('[IDB] readTable failed for ' + t + ':', e);
-          }
-        }
-        const hydrated = ALL_TABLES.filter(t => _mem[t] !== undefined).length;
-        console.log('[IDB] ✓ Stage 1 ready — ' + hydrated + '/' + ALL_TABLES.length + ' tables hydrated into _mem');
+        console.log('[IDB] ✓ Stage 1 ready — dual-write (IDB + localStorage) active');
       } catch(e) {
         window._idbFailed = true;
-        console.warn('[IDB] Initialisation failed — falling back to localStorage only:', e.message || e);
+        console.warn('[IDB] Initialisation failed — localStorage-only mode:', e.message || e);
       }
     }
   };
@@ -26650,33 +26637,17 @@ const NOTES_PAGE = {
 function noteSave(){ NOTES_PAGE.save(); } // §7 wrapper
 
 // ── BOOT ──
-// §v1.1.343: Boot is now async — awaits DB.initIDB() before APP.boot() to ensure
-// _mem is hydrated from IndexedDB, fixing empty-page issues on first render.
-document.addEventListener('DOMContentLoaded', async ()=>{
-  // Show a minimal splash while IDB initialises (hides blank screen)
-  const _idbSplash = document.createElement('div');
-  _idbSplash.id = 'idbSplash';
-  _idbSplash.style.cssText = [
-    'position:fixed;top:0;left:0;width:100%;height:100%',
-    'background:#0a0f1e;display:flex;align-items:center;justify-content:center',
-    'z-index:99999;color:#f1f5f9;font-family:Cairo,sans-serif;font-size:18px;direction:rtl'
-  ].join(';');
-  _idbSplash.textContent = 'جارِ التحميل…';
-  document.body.appendChild(_idbSplash);
-
-  // Watchdog: if initIDB hangs (e.g. slow private-browsing IDB), proceed after 3 s
-  const _idbWatchdog = new Promise(function(resolve) {
-    setTimeout(function() {
-      console.warn('[IDB] initIDB watchdog triggered (3 s) — proceeding without IDB');
-      window._idbFailed = true;
-      resolve();
-    }, 3000);
+// §v1.1.343-FIX: IDB initialises in background — APP.boot() fires immediately (same as v1.1.342).
+// Background rationale: Firebase auth also calls APP.boot() at ~0.5s. Delaying APP.boot()
+// from DOMContentLoaded caused a destructive double-boot (auth boot at 0.5s → pages render;
+// then watchdog boot at 3s → navigated back to login, clearing all page content).
+// _mem is populated lazily by _get() from localStorage on first access — no blocking needed.
+document.addEventListener('DOMContentLoaded', ()=>{
+  // §v1.1.343: Fire IDB init in background — non-blocking, zero impact on boot timing
+  DB.initIDB().catch(function(e) {
+    console.warn('[IDB] Background init error:', e);
+    window._idbFailed = true;
   });
-
-  await Promise.race([ DB.initIDB(), _idbWatchdog ]);
-
-  _idbSplash.remove();
-
   APP.boot();
   // Auto run system test after 2 seconds on first load
   // §v1.1.181: run silently at startup (silent=true → no toast on auto-boot)
