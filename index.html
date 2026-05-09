@@ -3843,19 +3843,17 @@ const IDB_ENGINE = (function(){
 
   // ── One-time migration from localStorage → IDB ──────────────────
   async function _migrate(mem){
-    if(localStorage.getItem(MIGRATE_FLAG)) return;
+    if(localStorage.getItem(MIGRATE_FLAG)) return; // already migrated
     let migrated = 0;
     for(const t of ALL_TABLES){
-      const raw = localStorage.getItem(NS + t);
-      if(raw){
-        try{
-          const rows = JSON.parse(raw);
-          if(Array.isArray(rows) && rows.length > 0){
-            mem[t] = rows;
-            await _writeTable(t, rows);
-            migrated++;
-          }
-        } catch(_){ /* skip malformed */ }
+      // Use mem[t] if already loaded (recovery path), otherwise read localStorage
+      const rows = (mem[t] && mem[t].length > 0)
+        ? mem[t]
+        : (()=>{ try{ return JSON.parse(localStorage.getItem(NS + t)||'[]'); }catch(_){ return []; } })();
+      if(Array.isArray(rows) && rows.length > 0){
+        mem[t] = rows;
+        await _writeTable(t, rows);
+        migrated++;
       }
     }
     localStorage.setItem(MIGRATE_FLAG, Date.now().toString());
@@ -3986,6 +3984,12 @@ const DB = (function(){
     },
   // ── §v1.1.345: purgeLegacyLocalStorage — call once after stable boot ─
   purgeLegacyLocalStorage(){
+    // §v1.1.346 SAFETY: never purge if IDB has no data (prevents data loss on IDB failure)
+    const hasIDBData = IDB_ENGINE.ALL_TABLES.some(t => (_mem[t]||[]).length > 0);
+    if(!hasIDBData){
+      console.warn('[DB] Skipping localStorage purge — IDB appears empty, keeping localStorage as backup');
+      return 0;
+    }
     const NS2 = 'spos_v4_';
     let removed = 0;
     IDB_ENGINE.ALL_TABLES.forEach(t => {
@@ -4016,18 +4020,43 @@ const DB = (function(){
   // ── §v1.1.344: initIDB — called at boot, before APP.boot() ────────
   // Opens IndexedDB, runs one-time migration, loads all tables into _mem
   initIDB: async function(){
-    try{
-      await IDB_ENGINE.open();           // ensure Dexie is ready
-      await IDB_ENGINE.migrate(_mem);    // one-time: localStorage → IDB
-      await IDB_ENGINE.loadAll(_mem);    // populate _mem from IDB
-      console.info('[DB.initIDB] Ready — all tables loaded into memory ✓');
-    } catch(e){
-      console.error('[DB.initIDB] Failed — falling back to localStorage', e);
-      // Fallback: load from localStorage into _mem so app still works
-      const NS2 = 'spos_v4_';
+    const NS2 = 'spos_v4_';
+    // Helper: check if _mem has any real data
+    const _memHasData = () => IDB_ENGINE.ALL_TABLES.some(t => (_mem[t]||[]).length > 0);
+    // Helper: load all tables from localStorage into _mem
+    const _loadFromLS = () => {
+      let found = 0;
       IDB_ENGINE.ALL_TABLES.forEach(t => {
-        try{ _mem[t] = JSON.parse(localStorage.getItem(NS2+t)||'[]'); }catch(_){ _mem[t]=[]; }
+        try{
+          const d = JSON.parse(localStorage.getItem(NS2+t)||'[]');
+          if(Array.isArray(d)){ _mem[t] = d; if(d.length) found++; }
+        }catch(_){ _mem[t] = []; }
       });
+      return found;
+    };
+    try{
+      await IDB_ENGINE.open();        // ensure Dexie is ready
+      await IDB_ENGINE.migrate(_mem); // one-time: localStorage → IDB (skipped if flag set)
+      await IDB_ENGINE.loadAll(_mem); // populate _mem from IDB
+
+      // §v1.1.346 SAFETY: If IDB returned no rows, recover from localStorage
+      if(!_memHasData()){
+        console.warn('[DB.initIDB] IDB empty — recovering from localStorage');
+        const lsCount = _loadFromLS();
+        if(lsCount > 0){
+          // Re-seed IDB from localStorage (clear stale flag first)
+          localStorage.removeItem('_idb_migrated_v1');
+          await IDB_ENGINE.migrate(_mem);
+          console.info('[DB.initIDB] Recovery complete —', lsCount, 'tables re-seeded into IDB ✓');
+        } else {
+          console.info('[DB.initIDB] Fresh install — no existing data ✓');
+        }
+      } else {
+        console.info('[DB.initIDB] Ready — all tables loaded from IDB ✓');
+      }
+    } catch(e){
+      console.error('[DB.initIDB] IDB failed — falling back to localStorage only', e);
+      _loadFromLS();
     }
   }
   };
