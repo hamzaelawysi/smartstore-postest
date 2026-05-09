@@ -18,6 +18,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/dexie@3.2.4/dist/dexie.js"></script>
 <!-- §v1.1.125: chartjs-plugin-datalabels — data labels on bars and doughnut slices -->
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <!-- Google Identity Services — Redirect OAuth 2.0 (cross-browser, no popups) -->
@@ -3744,8 +3745,27 @@ function loginScreenRestore(){
 'use strict';
 const DB = (function(){
   const NS = 'spos_v4_';
-  function _get(t){ try{ return JSON.parse(localStorage.getItem(NS+t)||'[]'); }catch(e){ return []; } }
+
+  // ── Stage 1: In-memory cache ──────────────────────────────────────────────
+  const _mem = {};
+
+  function _get(t){
+    if(_mem[t] !== undefined) return _mem[t];
+    try{ const v = JSON.parse(localStorage.getItem(NS+t)||'[]'); _mem[t]=v; return v; }catch(e){ return []; }
+  }
+
+  function _writeToIDB(t, d){
+    if(window._idbFailed) return;
+    try{
+      if(window.IDB_ENGINE && window.IDB_ENGINE._ready){
+        window.IDB_ENGINE.writeTable(t, d).catch(e=>{ console.warn('[IDB] writeTable failed:', t, e); });
+      }
+    }catch(e){ console.warn('[IDB] _writeToIDB error:', e); }
+  }
+
   function _set(t,d){
+    _mem[t] = d; // instant synchronous update
+    _writeToIDB(t, d); // async background write — fire-and-forget
     try {
       localStorage.setItem(NS+t, JSON.stringify(d));
     } catch(e) {
@@ -3846,9 +3866,121 @@ const DB = (function(){
         return true;
       });
       _set(table, [...existing, ...toInsert]);
+    },
+
+    // ── Stage 1: expose _mem for debug / IDB population ──────────────────
+    get _mem(){ return _mem; },
+
+    // ── Stage 1: initIDB ─────────────────────────────────────────────────
+    async initIDB(){
+      if(window._idbFailed){ console.log('[IDB] skipped — already failed'); return; }
+      try{
+        const ok = await window.IDB_ENGINE.isSupported();
+        if(!ok){ window._idbFailed=true; console.warn('[IDB] Not supported — using localStorage only'); return; }
+
+        await window.IDB_ENGINE.open();
+        console.log('[IDB] DB opened');
+
+        // One-time migration from localStorage → IndexedDB
+        await window.IDB_ENGINE.migrate();
+
+        // Populate _mem from IndexedDB (fixes empty-pages issue)
+        const tables = ['USERS','OPS_LOG','PRODUCTS','INVOICES','RETURNS','EXPENSES','EXPENSE_FILES',
+          'EXPENSE_ENTRIES','DEBTS','SUPPLIERS','PURCHASE_INVOICES','SUPPLIER_PAYMENTS',
+          'PURCHASE_RETURNS','SUPPLIER_CREDITS','BACKUPS','SYNC_LOG','CATEGORIES','SETTINGS',
+          'CUSTOMERS','CUSTOMER_CREDITS','INVENTORY_MOVEMENTS','NOTES'];
+        for(const t of tables){
+          try{
+            const rows = await window.IDB_ENGINE.readTable(t);
+            if(rows && rows.length > 0) _mem[t] = rows;
+            // If IDB has nothing, _mem stays unpopulated → _get() will fall back to localStorage on first read
+          }catch(e){ console.warn('[IDB] readTable failed:', t, e); }
+        }
+        window.IDB_ENGINE._ready = true;
+        console.log('[IDB] Stage 1 ready. _mem tables loaded:', Object.keys(_mem).length);
+      }catch(e){
+        window._idbFailed = true;
+        console.warn('[IDB] initIDB failed — falling back to localStorage:', e);
+      }
     }
   };
 })();
+
+// ── Stage 1: IDB_ENGINE ──────────────────────────────────────────────────────
+window.IDB_ENGINE = (function(){
+  const DB_NAME = 'SmartStorePOS';
+  const DB_VERSION = 1;
+  const ALL_TABLES = ['USERS','OPS_LOG','PRODUCTS','INVOICES','RETURNS','EXPENSES','EXPENSE_FILES',
+    'EXPENSE_ENTRIES','DEBTS','SUPPLIERS','PURCHASE_INVOICES','SUPPLIER_PAYMENTS',
+    'PURCHASE_RETURNS','SUPPLIER_CREDITS','BACKUPS','SYNC_LOG','CATEGORIES','SETTINGS',
+    'CUSTOMERS','CUSTOMER_CREDITS','INVENTORY_MOVEMENTS','NOTES'];
+  const MIGRATE_FLAG = '_idb_migrated_v1';
+  const NS = 'spos_v4_';
+
+  let _db = null;
+  let _ready = false;
+
+  async function open(){
+    if(_db) return _db;
+    const dex = new Dexie(DB_NAME);
+    // All stores use 'id' as primary key (++ = auto-increment not needed since we supply id)
+    const schema = {};
+    ALL_TABLES.forEach(t => { schema[t] = 'id'; });
+    dex.version(DB_VERSION).stores(schema);
+    await dex.open();
+    _db = dex;
+    return _db;
+  }
+
+  async function writeTable(table, data){
+    if(!_db) return;
+    // Dexie bulkPut replaces by primary key — works for arrays of objects with 'id'
+    const rows = Array.isArray(data) ? data : [];
+    await _db[table].clear();
+    if(rows.length > 0) await _db[table].bulkPut(rows);
+  }
+
+  async function readTable(table){
+    if(!_db) return [];
+    return await _db[table].toArray();
+  }
+
+  async function migrate(){
+    if(localStorage.getItem(MIGRATE_FLAG)) return; // already done
+    console.log('[IDB] Running one-time migration from localStorage…');
+    for(const t of ALL_TABLES){
+      try{
+        const raw = localStorage.getItem(NS+t);
+        if(raw){
+          const rows = JSON.parse(raw);
+          if(Array.isArray(rows) && rows.length > 0) await writeTable(t, rows);
+        }
+      }catch(e){ console.warn('[IDB] migrate error for', t, e); }
+    }
+    localStorage.setItem(MIGRATE_FLAG, '1');
+    console.log('[IDB] Migration complete');
+  }
+
+  async function isSupported(){
+    try{
+      if(!window.indexedDB) return false;
+      // Quick test write
+      const testDB = await new Promise((res, rej)=>{
+        const req = indexedDB.open('_idb_test_spos', 1);
+        req.onsuccess = ()=>{ req.result.close(); res(true); };
+        req.onerror  = ()=>rej(req.error);
+        req.onupgradeneeded = e=>{ e.target.result.createObjectStore('t',{keyPath:'id'}); };
+      });
+      indexedDB.deleteDatabase('_idb_test_spos');
+      return true;
+    }catch(e){ return false; }
+  }
+
+  return { open, writeTable, readTable, migrate, isSupported, get _ready(){ return _ready; }, set _ready(v){ _ready=v; } };
+})();
+
+// ── Stage 1: debug helper ────────────────────────────────────────────────────
+window._debugStorage = ()=> console.log('[IDB] _mem tables:', Object.keys(DB._mem).length, Object.keys(DB._mem));
 
 // ════ §v1.1.172: One-time migration — add payment-tracking fields to EXPENSES + EXPENSE_ENTRIES ════
 // Runs once at launch. Only touches records missing the new fields (idempotent).
@@ -4792,7 +4924,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.324'; // §v1.1.324: Added font color selector (7 colors: أبيض/رصاصي/ذهبي/أخضر/وردي/برتقالي/أسود) in sidebar theme controls, saved in localStorage; §v1.1.323: Added light/dark mode + 6 accent colors
+const APP_VERSION    = '1.1.343'; // §v1.1.343: IndexedDB Stage 1 — in-memory cache (_mem), dual write (IDB + localStorage), safe fallback, splash boot, fixed empty pages; §v1.1.324: Added font color selector (7 colors: أبيض/رصاصي/ذهبي/أخضر/وردي/برتقالي/أسود) in sidebar theme controls, saved in localStorage; §v1.1.323: Added light/dark mode + 6 accent colors
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
 // §v1.1.296: Stage 4 – End of Day Summary PDF and CSV exports (full content)
@@ -26278,7 +26410,30 @@ const NOTES_PAGE = {
 function noteSave(){ NOTES_PAGE.save(); } // §7 wrapper
 
 // ── BOOT ──
-document.addEventListener('DOMContentLoaded', ()=>{
+document.addEventListener('DOMContentLoaded', async ()=>{
+  // Stage 1: Show splash while IndexedDB initialises
+  const splash = document.createElement('div');
+  splash.id = 'idb-splash';
+  splash.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;'
+    +'justify-content:center;background:#111;color:#f5c518;font-size:1.3rem;'
+    +'font-family:sans-serif;direction:rtl;letter-spacing:.03em;';
+  splash.textContent = 'جارِ التحميل…';
+  document.body.appendChild(splash);
+
+  // Watchdog: if initIDB takes > 3 s, boot anyway
+  let idbDone = false;
+  const watchdog = setTimeout(()=>{
+    if(!idbDone){
+      console.warn('[IDB] watchdog fired — booting without IDB');
+      window._idbFailed = true;
+    }
+  }, 3000);
+
+  try{ await DB.initIDB(); }catch(e){ window._idbFailed=true; console.warn('[IDB] boot initIDB error:', e); }
+  idbDone = true;
+  clearTimeout(watchdog);
+
+  splash.remove();
   APP.boot();
   // Auto run system test after 2 seconds on first load
   // §v1.1.181: run silently at startup (silent=true → no toast on auto-boot)
