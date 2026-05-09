@@ -526,10 +526,18 @@ select option{background:var(--card)}
 <script>
 // §v1.1.80: Early binding — loginScreenRestore defined here so HTML buttons
 // that fire before main script loads never throw ReferenceError.
-// §v1.1.334: Simplified stub — real implementation overwrites this after full load.
+// The real implementation overwrites this at line ~7365 after full load.
 function loginScreenRestore(){
-  // Script not yet fully loaded — queue after load and let real impl handle it
-  window.addEventListener('load', function(){ loginScreenRestore(); }, { once: true });
+  if(typeof TOAST !== "undefined"){
+    if(!window._fbCurrentUser){
+      TOAST.warn("يرجى تسجيل الدخول أولاً باستخدام Google ثم استخدام زر الاستعادة");
+      return;
+    }
+    if(typeof DRIVE_SYNC !== "undefined") DRIVE_SYNC.restoreFromDrive();
+  } else {
+    // Script not yet fully loaded — queue after load
+    window.addEventListener("load", function(){ loginScreenRestore(); }, { once: true });
+  }
 }
 </script>
 <script>
@@ -539,7 +547,7 @@ function loginScreenRestore(){
   var urlDev = (window.location.search.indexOf('dev=1') !== -1);
 
   function _positionEruda(){
-    const entry = document.querySelector('#eruda .eruda-entry-btn');
+    var entry = document.querySelector('#eruda .eruda-entry-btn');
     if(entry){ entry.style.left='16px'; entry.style.bottom='16px'; entry.style.right='auto'; entry.style.top='auto'; }
   }
   function _loadEruda(){
@@ -550,7 +558,7 @@ function loginScreenRestore(){
     s.onload = function(){
       eruda.init();
       _positionEruda();
-      const _mo = new MutationObserver(function(){ _positionEruda(); });
+      var _mo = new MutationObserver(function(){ _positionEruda(); });
       _mo.observe(document.body, { childList:true, subtree:true });
       setTimeout(function(){ _mo.disconnect(); }, 5000);
     };
@@ -1272,9 +1280,7 @@ function loginScreenRestore(){
           <tbody id="rplSIBody"></tbody>
         </table>
       </div>
-      <!-- §v1.1.342: virtual scroll info + sentinel -->
-      <div id="siVsInfo" style="display:none;text-align:center;padding:8px 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--bdr)"></div>
-      <div id="siVsSentinel" style="height:1px"></div>
+    </div>
   </div>
 
   <div id="rplPL" style="display:none"><div class="kgrid" style="grid-template-columns:repeat(3,1fr)" id="rplPLKPIs"></div><div class="card" style="margin-bottom:12px" id="rplPL7Metrics"></div><div class="card" style="margin-bottom:12px" id="rplAvailableCash"></div><div class="card"><div class="tw"><table><thead><tr><th>البند</th><th>القيمة</th><th>النسبة</th><th>ملاحظة</th></tr></thead><tbody id="rplPLBody"></tbody></table></div></div></div>
@@ -1501,8 +1507,6 @@ function loginScreenRestore(){
   <div class="al alw" style="margin-bottom:16px"><i class="fa-solid fa-info-circle"></i><span><strong>قاعدة معمارية:</strong> البيانات محلية دائماً. Drive = مرآة فقط. لا يوجد سيرفر مركزي.</span></div>
 
   <!-- LOCAL MODE BACKUP PANEL — highlighted for phone users -->
-  <!-- §v1.1.330: Storage usage gauge -->
-  <div id="storageGauge" style="margin-bottom:14px"></div>
   <div class="kgrid" style="grid-template-columns:repeat(4,1fr)" id="bkpKPIs"></div>
   <div class="g2" style="margin-bottom:16px">
     <div class="card">
@@ -3489,7 +3493,7 @@ function loginScreenRestore(){
         <table>
           <thead><tr><th>المنتج</th><th>الكمية</th><th>سعر التكلفة</th><th>الإجمالي</th><th></th></tr></thead>
           <tbody id="purRetItemsTbody">
-            <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">أضف منتجات للإرجاع</td></tr><!-- [v1.1.331] HIGH-4: حُذف id="purRetNoItems" من HTML الثابت — الـ ID يُولَّد ديناميكياً بـ JS فقط -->
+            <tr id="purRetNoItems"><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">أضف منتجات للإرجاع</td></tr>
           </tbody>
         </table>
       </div>
@@ -3747,9 +3751,7 @@ const DB = (function(){
     } catch(e) {
       if(e.name==='QuotaExceededError'||e.code===22||e.code===1014) {
         console.error('localStorage QuotaExceededError:', e);
-        // §v1.1.330: Show actionable modal instead of bare alert()
-        if(typeof _storageQuotaAlert === 'function') _storageQuotaAlert();
-        else alert('⚠️ تجاوز سعة التخزين المحلي.\nالرجاء حذف بعض النسخ الاحتياطية القديمة أو تصدير البيانات وتحرير مساحة.');
+        alert('⚠️ تجاوز سعة التخزين المحلي.\nالرجاء حذف بعض النسخ الاحتياطية القديمة أو تصدير البيانات وتحرير مساحة.');
       } else {
         console.error('localStorage write failed:', e);
       }
@@ -3853,11 +3855,11 @@ const DB = (function(){
 // New fields: total_due_cents, amount_paid_cents, remaining_cents, payment_method
 // Migration rule: treat existing amt/amt_cents as fully paid in cash (نقدي).
 function _migrateExpensesPaymentFields() {
-  let migratedCount = 0;
+  var migratedCount = 0;
   ['EXPENSES', 'EXPENSE_ENTRIES'].forEach(function(table) {
-    const rows = DB.all(table);
-    let needsWrite = false;
-    const updated = rows.map(function(r) {
+    var rows = DB.all(table);
+    var needsWrite = false;
+    var updated = rows.map(function(r) {
       // Skip records that already have all four fields populated
       if (
         r.total_due_cents !== undefined &&
@@ -3866,7 +3868,7 @@ function _migrateExpensesPaymentFields() {
         r.payment_method   !== undefined
       ) return r;
       // Derive paid amount from existing cents field, fallback to amt float
-      const paidCents = (typeof r.amt_cents === 'number') ? r.amt_cents : _toCents(r.amt || 0);
+      var paidCents = (typeof r.amt_cents === 'number') ? r.amt_cents : _toCents(r.amt || 0);
       needsWrite = true;
       migratedCount++;
       return Object.assign({}, r, {
@@ -3878,13 +3880,13 @@ function _migrateExpensesPaymentFields() {
     });
     if (needsWrite) {
       DB.importTable(table, updated, 'replace');
-      if(window.DEV_MODE) console.log('[v1.1.172] Migration: ' + table + ' — updated ' + rows.filter(function(r){ return r.total_due_cents === undefined || r.amount_paid_cents === undefined || r.remaining_cents === undefined || r.payment_method === undefined; }).length + ' records');
+      console.log('[v1.1.172] Migration: ' + table + ' — updated ' + rows.filter(function(r){ return r.total_due_cents === undefined || r.amount_paid_cents === undefined || r.remaining_cents === undefined || r.payment_method === undefined; }).length + ' records');
     }
   });
   if (migratedCount === 0) {
-    if(window.DEV_MODE) console.log('[v1.1.172] Migration: all EXPENSES + EXPENSE_ENTRIES records already up-to-date');
+    console.log('[v1.1.172] Migration: all EXPENSES + EXPENSE_ENTRIES records already up-to-date');
   } else {
-    if(window.DEV_MODE) console.log('[v1.1.172] Migration complete — ' + migratedCount + ' records backfilled');
+    console.log('[v1.1.172] Migration complete — ' + migratedCount + ' records backfilled');
   }
 }
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3976,7 +3978,7 @@ const LEDGER_HASH = (function(){
   // Add SHA-256 hash to new events (call during chainEvent)
   // Note: returns Promise — event is mutated asynchronously
   async function addSHA256(evt){
-    try{ evt.sha256Hash = await computeSHA256(evt); }catch(_){ if(window.DEV_MODE) console.warn('[EVENTS] computeSHA256 failed — hash skipped', _); }
+    try{ evt.sha256Hash = await computeSHA256(evt); }catch(_){}
     return evt;
   }
 
@@ -4111,7 +4113,6 @@ const CALC_CACHE = {
     const _prev = window._dbSuppressSync; window._dbSuppressSync = true; // §v1.1.309: cache invalidation must not trigger cloud sync
     try{ const e=DB.findOne('SETTINGS',{key:this.KEY}); if(e) DB.update('SETTINGS',e.id,{value:null}); }catch(err){ console.warn('[CALC_CACHE]', err.message); }
     finally{ window._dbSuppressSync = _prev; }
-    try{ if(typeof CALC!=='undefined') CALC._rc.flush(); }catch(_){} // §v1.1.329: flush render-cache on every invalidation
   },
   isValid(snap){
     if(!snap||!snap.lastEventId||!snap.builtAt) return false;
@@ -4140,19 +4141,19 @@ const CALC_CACHE = {
       s.totalSalesCents+=grandCents;
       if(debtCents>0) s.netRemainingDebtCents+=debtCents; // increment debt for credit/partial
       s.lastEventId=n?n.id:s.lastEventId; s.lastEventTimestamp=n?n.timestamp:s.lastEventTimestamp; s.builtAt=new Date().toISOString(); this.set(s);
-    }catch(_){ console.warn('[CALC_CACHE] onSale update failed', _); }finally{ window._cacheLock=false; }
+    }catch(_){}finally{ window._cacheLock=false; }
   },
   onExpense(amtCents){
     if(window._cacheLock) return; window._cacheLock=true; // §v1.1.242 FIX#11
     try{ const s=this.get(); if(!s) return; const ev=EVENTS.all(); const n=ev[0];
       s.totalExpensesCents+=amtCents; s.lastEventId=n?n.id:s.lastEventId; s.lastEventTimestamp=n?n.timestamp:s.lastEventTimestamp; s.builtAt=new Date().toISOString(); this.set(s);
-    }catch(_){ console.warn('[CALC_CACHE] onExpense update failed', _); }finally{ window._cacheLock=false; }
+    }catch(_){}finally{ window._cacheLock=false; }
   },
   onPayment(amtCents){
     if(window._cacheLock) return; window._cacheLock=true; // §v1.1.242 FIX#11
     try{ const s=this.get(); if(!s) return; const ev=EVENTS.all(); const n=ev[0];
       s.netRemainingDebtCents=Math.max(0,s.netRemainingDebtCents-amtCents); s.lastEventId=n?n.id:s.lastEventId; s.lastEventTimestamp=n?n.timestamp:s.lastEventTimestamp; s.builtAt=new Date().toISOString(); this.set(s);
-    }catch(_){ console.warn('[CALC_CACHE] onPayment update failed', _); }finally{ window._cacheLock=false; }
+    }catch(_){}finally{ window._cacheLock=false; }
   }
 };
 
@@ -4198,39 +4199,6 @@ const EVENTS = (function(){
       return this.byDate(date).filter(e => type === 'all' || e.type.includes(type));
     },
     count(){ return DB.count('OPS_LOG'); },
-    // §v1.1.329: Prune OPS_LOG — keep last keepDays days + ALL financial events forever
-    // Financial events (SALE, RETURN, EXPENSE, DEBT_*) are never deleted — audit trail.
-    // System/UI events older than keepDays are safe to remove.
-    // Returns { removed, kept } counts.
-    prune(keepDays=90){
-      const _FINANCIAL = new Set(['SALE','RETURN','EXPENSE','EXP_FILE_PAYMENT',
-        'DEBT_PAYMENT','FIRST_INSTALLMENT','DEBT_CREATED','PURCHASE','PURCHASE_RETURN',
-        'SUPPLIER_PAYMENT','RETURN_VOID','ADJUSTMENT','CREATE_INVOICE']);
-      const cutoff = new Date(Date.now() - keepDays * 86400000).toISOString();
-      const all = DB.all('OPS_LOG');
-      const toDelete = all.filter(e => {
-        if(!e.timestamp || e.timestamp >= cutoff) return false; // keep recent
-        if(_FINANCIAL.has(e.type)) return false;                // keep financial forever
-        return true; // safe to prune: old system/UI event
-      });
-      const _prev = window._dbSuppressSync; window._dbSuppressSync = true;
-      try{ toDelete.forEach(e => DB.delete('OPS_LOG', e.id)); }
-      finally{ window._dbSuppressSync = _prev; }
-      if(window.DEV_MODE) console.log(`[EVENTS.prune] removed ${toDelete.length} / kept ${all.length - toDelete.length}`);
-      return { removed: toDelete.length, kept: all.length - toDelete.length };
-    },
-    // §v1.1.329: Prune INVENTORY_MOVEMENTS — after a stock rebuild, movements older
-    // than keepDays are redundant (stock is already correct). Keep last keepDays for audit.
-    pruneMovements(keepDays=180){
-      const cutoff = new Date(Date.now() - keepDays * 86400000).toISOString();
-      const all = DB.all('INVENTORY_MOVEMENTS');
-      const toDelete = all.filter(m => m.timestamp && m.timestamp < cutoff);
-      const _prev = window._dbSuppressSync; window._dbSuppressSync = true;
-      try{ toDelete.forEach(m => DB.delete('INVENTORY_MOVEMENTS', m.id)); }
-      finally{ window._dbSuppressSync = _prev; }
-      if(window.DEV_MODE) console.log(`[EVENTS.pruneMovements] removed ${toDelete.length} / kept ${all.length - toDelete.length}`);
-      return { removed: toDelete.length, kept: all.length - toDelete.length };
-    },
     parsePayload(e){
       try{ return JSON.parse(e.payload); }catch(_){ return { detail: e.payload }; }
     }
@@ -4671,50 +4639,6 @@ const BACKUP = (function(){
   };
 })();
 
-// ── §v1.1.330: Storage usage helper — shared by banner, blocker, and gauge ──
-function _storageUsage() {
-  try {
-    const used = Object.keys(localStorage)
-      .filter(k => k.startsWith('spos_'))
-      .reduce((a, k) => a + (localStorage.getItem(k) || '').length * 2, 0); // *2 UTF-16
-    const limit = 5 * 1024 * 1024; // 5MB — consistent with existing quota check
-    const pct = Math.min(Math.round(used / limit * 100), 100);
-    return { used, limit, pct };
-  } catch(_) { return { used: 0, limit: 5 * 1024 * 1024, pct: 0 }; }
-}
-
-// ── §v1.1.330: Storage quota alert — replaces silent alert() in DB._set() ──
-// Called when QuotaExceededError fires. Shows actionable modal.
-function _storageQuotaAlert() {
-  // Remove existing modal if any
-  const existing = document.getElementById('_storageBlockerModal');
-  if (existing) return; // already showing
-  const modal = document.createElement('div');
-  modal.id = '_storageBlockerModal';
-  modal.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;padding:16px';
-  const { pct } = _storageUsage();
-  modal.innerHTML = `
-    <div style="background:var(--card,#1e2330);border:2px solid var(--red,#e53e3e);border-radius:16px;padding:28px 22px;max-width:400px;width:100%;text-align:center;direction:rtl">
-      <div style="font-size:40px;margin-bottom:10px">🚨</div>
-      <h3 style="color:var(--red,#e53e3e);margin:0 0 10px;font-size:17px">تجاوز سعة التخزين المحلي</h3>
-      <p style="color:var(--txt,#e2e8f0);font-size:13px;margin:0 0 18px;line-height:1.7">
-        المساحة المستخدمة وصلت إلى <strong style="color:var(--red,#e53e3e)">${pct}%</strong>.<br>
-        لا يمكن حفظ بيانات جديدة حتى تحرير مساحة.
-      </p>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <button onclick="goTo('settings');document.getElementById('_storageBlockerModal')?.remove()"
-          style="padding:11px 16px;border-radius:10px;border:none;background:var(--blue,#3b82f6);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">
-          <i class="fa-solid fa-hard-drive"></i> تفعيل الملف المحمول (Portable Mode)
-        </button>
-        <button onclick="goTo('backup');document.getElementById('_storageBlockerModal')?.remove()"
-          style="padding:11px 16px;border-radius:10px;border:none;background:var(--card2,#2d3748);color:var(--txt,#e2e8f0);font-size:13px;cursor:pointer;font-family:inherit;border:1px solid var(--bdr,#4a5568)">
-          <i class="fa-solid fa-broom"></i> تنظيف السجلات القديمة يدوياً
-        </button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-}
-
 // ════ app.js ════
 'use strict';
 // ═══════════════════════════════════════════
@@ -4745,27 +4669,27 @@ function todayISO(){ return new Date().toLocaleDateString('en-CA'); }
 function fmtLocalTime(isoTs){
   if(!isoTs) return '—';
   const d = new Date(isoTs);
-  if(Number.isNaN(d.getTime())) return (isoTs.slice(11,16)||'—');
+  if(isNaN(d.getTime())) return (isoTs.slice(11,16)||'—');
   return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
 }
 function fmtLocalDateTime(isoTs){
   if(!isoTs) return '—';
   const d = new Date(isoTs);
-  if(Number.isNaN(d.getTime())) return isoTs.replace('T',' ').slice(0,16)||'—';
+  if(isNaN(d.getTime())) return isoTs.replace('T',' ').slice(0,16)||'—';
   const date = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
   return date + ' ' + fmtLocalTime(isoTs);
 }
 function fmtLocalDate(isoTs){
   if(!isoTs) return '—';
   const d = new Date(isoTs);
-  if(Number.isNaN(d.getTime())) return isoTs.slice(0,10)||'—';
+  if(isNaN(d.getTime())) return isoTs.slice(0,10)||'—';
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
 // Full Day + Date + Time display (local) with UTC tooltip
 function fmtLocalFull(isoTs){
   if(!isoTs) return '—';
   const d = new Date(isoTs);
-  if(Number.isNaN(d.getTime())) return isoTs||'—';
+  if(isNaN(d.getTime())) return isoTs||'—';
   const days=['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
   const day=days[d.getDay()];
   const date=fmtLocalDate(isoTs);
@@ -4868,7 +4792,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.342'; // §v1.1.342: Virtual scrolling for Stock Insights tab — _siVsBuildRows/_siVsAppend/_siVsAttach; exports unchanged (use full _siRows)
+const APP_VERSION    = '1.1.324'; // §v1.1.324: Added font color selector (7 colors: أبيض/رصاصي/ذهبي/أخضر/وردي/برتقالي/أسود) in sidebar theme controls, saved in localStorage; §v1.1.323: Added light/dark mode + 6 accent colors
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
 // §v1.1.296: Stage 4 – End of Day Summary PDF and CSV exports (full content)
@@ -5132,11 +5056,7 @@ const TOAST = {
     const cls = { ok:'tok', err:'terr', warn:'twrn' }[type]||'tok';
     const t = document.createElement('div');
     t.className = 'toast ' + cls;
-    // §v1.1.328: XSS-safe DOM construction — no innerHTML for user-controlled msg
-    const _ti = document.createElement('i');
-    _ti.className = 'fa-solid ' + ic;
-    t.appendChild(_ti);
-    t.appendChild(document.createTextNode(msg));
+    t.innerHTML = `<i class="fa-solid ${ic}"></i>${msg}`;
     // §ROOT-CAUSE-FIX v10.8: Defensive container lookup — create if missing.
     // Previously, a null getElementById('toasts') caused TypeError inside every try{}
     // block that called TOAST, crashing the catch{} too and blocking closeModal()+render().
@@ -5296,16 +5216,8 @@ let PAY_TYPE = 'cash';
 //  Dashboard, Debts, Reports all use this same engine.
 // ════════════════════════════════════════════════════════════════
 const CALC = {
-  // §v1.1.329: Per-render memoization — caches DB.all() for heavy tables within
-  // a single render cycle. Call CALC._rc.flush() to clear (auto-cleared on invalidate).
-  // Reduces repeated DB.all() from O(N×calls) to O(N) per render cycle.
-  _rc: {
-    _d: {},
-    get(t){ return this._d[t] || (this._d[t] = DB.all(t)); },
-    flush(){ this._d = {}; }
-  },
   _p(e){ try{ return JSON.parse(e.payload||'{}'); }catch(_){ return {}; } },
-  getSales(){ return this._rc.get('INVOICES').filter(i=>i.type==='\u0628\u064a\u0639' && i.status!=='\u0645\u0644\u063a\u0627\u0629'); },
+  getSales(){ return DB.all('INVOICES').filter(i=>i.type==='\u0628\u064a\u0639' && i.status!=='\u0645\u0644\u063a\u0627\u0629'); },
   totalSales(fromDate=null, toDate=null){
     // §PHASE3: Sum in integer cents — eliminates float accumulation drift
     // total_c (integer cents, v10.2+) used when available; legacy float converted to cents
@@ -5330,7 +5242,7 @@ const CALC = {
           const frozenCost = parseFloat(it.cost_snapshot??it.cost??0);
           const qty = parseFloat(it.qty||0);
           if(frozenCost > 0) return b + _mulCents(_toCents(frozenCost), qty); // §22-FIX: Case2 re-applied with cents helpers
-          const p = this._rc.get('PRODUCTS').find(x=>x.id===it.id||x.code===it.id);
+          const p = DB.all('PRODUCTS').find(x=>x.id===it.id||x.code===it.id);
           return b + _mulCents(_toCents(p?.cost||0), qty);
         }, 0);
       }, 0);
@@ -5347,7 +5259,7 @@ const CALC = {
   // Scope: fromDate/toDate filter by return date (optional).
   // ─────────────────────────────────────────────────────
   totalSupplierRefundCOGS(fromDate=null, toDate=null){
-    return this._rc.get('PURCHASE_RETURNS')
+    return DB.all('PURCHASE_RETURNS')
       .filter(r=>{
         if(fromDate && (r.date||'') < fromDate) return false;
         if(toDate   && (r.date||'') > toDate)   return false;
@@ -5368,7 +5280,7 @@ const CALC = {
   // and are excluded. Returns total in dollars (float).
   // ══════════════════════════════════════════════════════════════════
   totalSupplierRefundCash(fromDate=null, toDate=null){
-    const totalCents = this._rc.get('PURCHASE_RETURNS')
+    const totalCents = DB.all('PURCHASE_RETURNS')
       .filter(r=>{
         if(fromDate && (r.date||'') < fromDate) return false;
         if(toDate   && (r.date||'') > toDate)   return false;
@@ -5388,13 +5300,13 @@ const CALC = {
     // §v1.1.176: Phase 7 — use amount_paid_cents (actual cash outflow); fallback to old fields for pre-migration records
     // §PHASE3: Expenses accumulated in integer cents
     // §UNIFY-1: Added optional date params for period-aware dashboard alignment
-    const quickCents = this._rc.get('EXPENSES')
+    const quickCents = DB.all('EXPENSES')
       .filter(e=>(!fromDate||( e.date||'')>=fromDate)&&(!toDate||(e.date||'')<=toDate))
       .reduce((a,e)=>a+(typeof e.amount_paid_cents==='number' ? e.amount_paid_cents : _toCents(e.amt||0)),0);
     // §v1.1.151-FIX1: Count ALL EXPENSE_ENTRIES regardless of type (all entries in files are expenses)
     // No double counting risk because linked quick expenses exist only in EXPENSES table
     // §v1.1.176: use amount_paid_cents; fallback to entryType-based extraction for old records
-    const fileCents  = this._rc.get('EXPENSE_ENTRIES')
+    const fileCents  = DB.all('EXPENSE_ENTRIES')
       .filter(en=>(!fromDate||(en.date||'')>=fromDate)&&(!toDate||(en.date||'')<=toDate))
       .reduce((a,en)=>{
         if(typeof en.amount_paid_cents==='number') return a+en.amount_paid_cents;
@@ -5411,7 +5323,7 @@ const CALC = {
   // Uses invoicePayType field stored on RETURNS records (populated at return creation).
   // Falls back to live invoice lookup for legacy records that lack invoicePayType.
   returnsBreakdown(fromDate=null, toDate=null){
-    const rets = this._rc.get('RETURNS').filter(r=>{
+    const rets = DB.all('RETURNS').filter(r=>{
       if(fromDate && (r.date||'') < fromDate) return false;
       if(toDate   && (r.date||'') > toDate)   return false;
       return true;
@@ -5434,8 +5346,8 @@ const CALC = {
       const cacheKey = invId || invNum || '';
       if(cacheKey && !invCache[cacheKey]){
         invCache[cacheKey] = invId
-          ? this._rc.get('INVOICES').find(i=>i.id===invId)
-          : this._rc.get('INVOICES').find(i=>i.num===invNum);
+          ? DB.all('INVOICES').find(i=>i.id===invId)
+          : DB.all('INVOICES').find(i=>i.num===invNum);
       }
       const origInv = cacheKey ? invCache[cacheKey] : null;
       const isCredit = origInv && (origInv.payType==='credit'||origInv.payType==='partial');
@@ -5558,7 +5470,7 @@ const CALC = {
     // RETURN_DEBT_ADJ_VOID has negative amt (restores total)
     // §PHASE3: return adjustments in integer cents
     const returnAdjCents = adjEvents.reduce((a,e)=>a+_toCents(this._p(e).amt||0), 0);
-    const retAdjTableCents = this._rc.get('RETURNS').filter(r=>{
+    const retAdjTableCents = DB.all('RETURNS').filter(r=>{
       if(r.method!=='debt_reduction') return false;
       return (invNum && r.inv===invNum) || (invId && r.invId===invId);
     }).reduce((a,r)=>a+_toCents(r.amt||0), 0);
@@ -5614,12 +5526,12 @@ const CALC = {
     let fixed=0;
     const _prev = window._dbSuppressSync; window._dbSuppressSync = true; // §v1.1.309: migration writes are derived data — must not trigger cloud sync
     try {
-      this._rc.get('DEBTS').forEach(d=>{
+      DB.all('DEBTS').forEach(d=>{
         if(d.originalTotal) return; // already migrated
         // Look up the actual invoice
         let inv=null;
-        if(d.invId)   inv=this._rc.get('INVOICES').find(i=>i.id===d.invId);
-        if(!inv&&d.invNum) inv=this._rc.get('INVOICES').find(i=>i.num===d.invNum);
+        if(d.invId)   inv=DB.all('INVOICES').find(i=>i.id===d.invId);
+        if(!inv&&d.invNum) inv=DB.all('INVOICES').find(i=>i.num===d.invNum);
         if(!inv) return;
         const origTotal=parseFloat(inv.total||0);
         if(!origTotal) return;
@@ -5645,7 +5557,7 @@ const CALC = {
     const _evts = EVENTS.all();
     const _prev = window._dbSuppressSync; window._dbSuppressSync = true;
     try {
-      this._rc.get('DEBTS').forEach(d=>{
+      DB.all('DEBTS').forEach(d=>{
         const {totalPaid,remain}=this.recalcDebtRemaining(d, _evts);
         const status=remain===0?'مسدد':d.status==='مسدد'?'نشط':d.status;
         DB.update('DEBTS',d.id,{paid:totalPaid,remain,status});
@@ -5739,7 +5651,7 @@ const CALC = {
     });
 
     // 4. Subtract ONLY cash sale returns in period
-    const allRets = this._rc.get('RETURNS');
+    const allRets = DB.all('RETURNS');
     const cashReturnCents = allRets
       .filter(r=>{
         if(!inPeriod(r.date||'')) return false;
@@ -5763,7 +5675,7 @@ const CALC = {
   // Collected Profit = (Collected / TotalDebt) × Debt Gross Profit
   cashVsDebtBreakdown(fromDate=null, toDate=null, _evts=null){
     const invs = this.getSales().filter(i=>(!fromDate||i.date>=fromDate)&&(!toDate||i.date<=toDate));
-    const allProds = this._rc.get('PRODUCTS');
+    const allProds = DB.all('PRODUCTS');
     // §v1.1.225: fetch events once — avoids N_invoices × 4 EVENTS.all() scans in loop
     // §v1.1.245 #30: accept pre-fetched _evts from caller to avoid redundant EVENTS.all()
     const _evts_r = _evts || EVENTS.all();
@@ -5806,7 +5718,7 @@ const CALC = {
         // ── Split: initial cash portion + remaining debt portion ──
         const {paid, remain} = this.invoiceActualRemain(inv, _evts_r);
         // The debt record stores the original debt amount (remain at time of sale)
-        const debtRec = this._rc.get('DEBTS').find(d=>d.invNum===inv.num||d.invId===inv.id);
+        const debtRec = DB.all('DEBTS').find(d=>d.invNum===inv.num||d.invId===inv.id);
         const originalDebtAmt = debtRec ? parseFloat(debtRec.total||0) : remain;
         const cashPortion = Math.max(0, tot - originalDebtAmt);
         const debtPortion = originalDebtAmt;
@@ -5865,14 +5777,10 @@ const CALC = {
     const totalRet       = _rb.totalReturns;
 
     // Per-return COGS adjustments (needed for gross margin reversal)
-    const allRetsFiltered = this._rc.get('RETURNS')
+    const allRetsFiltered = DB.all('RETURNS')
       .filter(r=>(!fromDate||r.date>=fromDate)&&(!toDate||r.date<=toDate));
     let cashRetCOGSAdj=0, debtRetCOGSAdj=0, totalRetProfitImpact=0;
-    // §v1.1.329: Pre-build invoice lookup maps ONCE — eliminates O(N²) DB.all('INVOICES')
-    // inside the forEach loop (previously called DB.all on every untagged return)
-    const _allInvForRB = this._rc.get('INVOICES');
-    const invCacheRB_byId  = Object.fromEntries(_allInvForRB.filter(i=>i.id).map(i=>[i.id,i]));
-    const invCacheRB_byNum = Object.fromEntries(_allInvForRB.filter(i=>i.num).map(i=>[i.num,i]));
+    const invCacheRB={};
     allRetsFiltered.forEach(r=>{
       const retAmt  = parseFloat(r.amt||0);
       const retCost = parseFloat(r.cost||0);
@@ -5882,8 +5790,8 @@ const CALC = {
       if(stored){ isDebtInv = stored==='credit'||stored==='partial'; }
       else {
         const ck = r.invId||r.inv||'';
-        // §v1.1.329: O(1) map lookup instead of O(N) DB.all().find() per return
-        const orig = ck ? (r.invId ? invCacheRB_byId[r.invId] : invCacheRB_byNum[r.inv]) : null;
+        if(ck && !invCacheRB[ck]) invCacheRB[ck] = r.invId ? DB.all('INVOICES').find(i=>i.id===r.invId) : DB.all('INVOICES').find(i=>i.num===r.inv);
+        const orig = ck ? invCacheRB[ck] : null;
         isDebtInv = orig && (orig.payType==='credit'||orig.payType==='partial');
       }
       if(isDebtInv) debtRetCOGSAdj += retCost;
@@ -5923,7 +5831,7 @@ const CALC = {
     // ── Inventory financial metrics ──
     // §FIX-INV: Use integer cents (_mulCents + _toCents) — eliminates float drift,
     // now matches CALC.inventoryValue() exactly (same arithmetic path).
-    const allProdsAll = this._rc.get('PRODUCTS');
+    const allProdsAll = DB.all('PRODUCTS');
     const invCostValue   = _fromCents(allProdsAll.reduce((a,p)=>a+_mulCents(_toCents(p.cost||0),parseFloat(p.stock||0)),0));
     const invRetailValue = _fromCents(allProdsAll.reduce((a,p)=>a+_mulCents(_toCents(p.priceR||0),parseFloat(p.stock||0)),0));
     const invExpectedProfit = invRetailValue - invCostValue;
@@ -5968,14 +5876,14 @@ const CALC = {
   // ── PART 4: Inventory value + sold goods value ──
   inventoryValue(){
     // §PHASE3: cents arithmetic for inventory valuation
-    return _fromCents(this._rc.get('PRODUCTS').reduce((a,p)=>a+_mulCents(_toCents(p.cost||0),parseFloat(p.stock||0)),0));
+    return _fromCents(DB.all('PRODUCTS').reduce((a,p)=>a+_mulCents(_toCents(p.cost||0),parseFloat(p.stock||0)),0));
   },
   inventoryRetailValue(){
-    return _fromCents(this._rc.get('PRODUCTS').reduce((a,p)=>a+_mulCents(_toCents(p.priceR||0),parseFloat(p.stock||0)),0));
+    return _fromCents(DB.all('PRODUCTS').reduce((a,p)=>a+_mulCents(_toCents(p.priceR||0),parseFloat(p.stock||0)),0));
   },
   soldGoodsValue(fromDate=null, toDate=null){
     // §PHASE3+PHASE5: COGS for period in cents, minus supplier refund adjustments
-    const allProds=this._rc.get('PRODUCTS');
+    const allProds=DB.all('PRODUCTS');
     const salesCents=this.getSales().filter(i=>(!fromDate||i.date>=fromDate)&&(!toDate||i.date<=toDate)).reduce((a,inv)=>{
       let items=[]; try{ items=JSON.parse(inv.items||'[]'); }catch(_){}
       return a+items.reduce((b,it)=>{ const itemCost=it.cost_snapshot??it.cost; if(itemCost!=null&&itemCost!==''){ return b+_mulCents(_toCents(itemCost),parseFloat(it.qty||0)); } const p=allProds.find(x=>x.id===it.id); return b+(p?_mulCents(_toCents(p.cost||0),parseFloat(it.qty||0)):0); },0);
@@ -6009,7 +5917,7 @@ const CALC = {
     // §FIX v10.10: Subtract cash refund returns from paid amount
     if(inv.payType==='cash' || inv.payType==='transfer'){
       // Find any cash-refund returns linked to this invoice
-      const cashRetsCents = this._rc.get('RETURNS').filter(r=>
+      const cashRetsCents = DB.all('RETURNS').filter(r=>
         (r.invId===invId||r.inv===invNum) &&
         (r.method==='cash'||r.method==='استرداد نقدي')
       ).reduce((a,r)=>a+_toCents(parseFloat(r.amt||0)),0); // §v1.1.307-FIX1: integer cents accumulation — eliminates float drift in invoiceActualRemain
@@ -6021,7 +5929,7 @@ const CALC = {
     // DEBTS.total = the debt portion at time of sale
     // For credit: DEBTS.total = invTotal (paid=0 at sale)
     // For partial: DEBTS.total = invTotal - initialPaid (remaining after first payment)
-    const debtRecords = this._rc.get('DEBTS').filter(d=>d.invNum===invNum||d.invId===invId);
+    const debtRecords = DB.all('DEBTS').filter(d=>d.invNum===invNum||d.invId===invId);
     const debtIds = new Set(debtRecords.map(d=>d.id));
     // The primary debt record for this invoice
     const primaryDebt = debtRecords[0];
@@ -6076,7 +5984,7 @@ const CALC = {
       return p.invId===invId || p.invNum===invNum;
     }).reduce((a,e)=>a+_toCents(this._p(e).amt||0),0);
 
-    const debtAdjReturnsCents = this._rc.get('RETURNS').filter(r=>{
+    const debtAdjReturnsCents = DB.all('RETURNS').filter(r=>{
       if(r.method!=='debt_reduction') return false;
       return r.invId===invId || r.inv===invNum;
     }).reduce((a,r)=>a+_toCents(r.amt||0),0);
@@ -6131,12 +6039,12 @@ const CALC = {
   // Sync invoice paid/remain/status from event history
   // §v1.1.226-FIX-2: accepts optional pre-fetched _evts to avoid repeated EVENTS.all() when called in a loop
   syncInvoiceStatus(invId, _evts){
-    const inv = this._rc.get('INVOICES').find(i=>i.id===invId); if(!inv) return;
+    const inv = DB.all('INVOICES').find(i=>i.id===invId); if(!inv) return;
     // §PHASE2A-v4: Never overwrite voided status — preserve audit record
     if(inv.status === 'ملغاة') return;
     const {paid, remain, effectiveTotal, totalDebtAdj} = this.invoiceActualRemain(inv, _evts);
     const origTotal = parseFloat(inv.total||0);
-    const hasReturns = this._rc.get('RETURNS').some(r=>r.invId===invId||r.inv===inv.num);
+    const hasReturns = DB.all('RETURNS').some(r=>r.invId===invId||r.inv===inv.num);
     const isFullyReturned = hasReturns && (effectiveTotal||remain)<=0.001 && origTotal>0.001;
     const isPartlyReturned = hasReturns && !isFullyReturned && (totalDebtAdj||0)>0.001;
     let status;
@@ -6157,7 +6065,7 @@ const CALC = {
     const _evts = EVENTS.all();
     const _prev = window._dbSuppressSync; window._dbSuppressSync = true; // §v1.1.311: save/restore — safe re-entrancy
     try {
-      this._rc.get('INVOICES').filter(i=>i.type==='بيع').forEach(i=>this.syncInvoiceStatus(i.id, _evts));
+      DB.all('INVOICES').filter(i=>i.type==='بيع').forEach(i=>this.syncInvoiceStatus(i.id, _evts));
     } finally {
       window._dbSuppressSync = _prev;
     }
@@ -6206,20 +6114,20 @@ const CALC = {
   // ══════════════════════════════════════════════════════
 
   totalPurchases(fromDate=null, toDate=null){
-    return _fromCents(this._rc.get('PURCHASE_INVOICES')
+    return _fromCents(DB.all('PURCHASE_INVOICES')
       .filter(inv=>(!fromDate||inv.date>=fromDate)&&(!toDate||inv.date<=toDate))
       .reduce((a,inv)=>a+_toCents(inv.total||0), 0)); // §FIX-B: cents arithmetic — eliminates float drift
   },
 
   totalSupplierPayments(fromDate=null, toDate=null){
-    return _fromCents(this._rc.get('SUPPLIER_PAYMENTS')
+    return _fromCents(DB.all('SUPPLIER_PAYMENTS')
       .filter(p=>(!fromDate||p.date>=fromDate)&&(!toDate||p.date<=toDate))
       .reduce((a,p)=>a+_toCents(p.amount||0), 0)); // §FIX-B: cents arithmetic
   },
 
   totalPurchaseReturns(fromDate=null, toDate=null){
     // §v1.1.226-FIX-3: use integer cents — consistent with totalPurchases() for correct netSupplierSpending()
-    return _fromCents(this._rc.get('PURCHASE_RETURNS')
+    return _fromCents(DB.all('PURCHASE_RETURNS')
       .filter(r=>(!fromDate||r.date>=fromDate)&&(!toDate||r.date<=toDate))
       .reduce((a,r)=>a+_toCents(parseFloat(r.totalReturnValue||0)), 0));
   },
@@ -6252,9 +6160,9 @@ const CALC = {
 
   supplierAgingReport(){
     const today = todayISO();
-    const invoices = this._rc.get('PURCHASE_INVOICES');
-    const returns  = this._rc.get('PURCHASE_RETURNS');
-    const payments = this._rc.get('SUPPLIER_PAYMENTS');
+    const invoices = DB.all('PURCHASE_INVOICES');
+    const returns  = DB.all('PURCHASE_RETURNS');
+    const payments = DB.all('SUPPLIER_PAYMENTS');
     const result   = { '0-30':[], '31-60':[], '61-90':[], '90+':[] };
     // §v1.1.240-FIX LEDGER-INFO: Compute dynamic remaining balance per invoice instead of
     // reading stale inv.remainingBalance (only updated when syncAllSupplierBalances runs).
@@ -6295,8 +6203,8 @@ const CALC = {
   },
 
   daysPayableOutstanding(){
-    const invoices = this._rc.get('PURCHASE_INVOICES');
-    const payments = this._rc.get('SUPPLIER_PAYMENTS');
+    const invoices = DB.all('PURCHASE_INVOICES');
+    const payments = DB.all('SUPPLIER_PAYMENTS');
     if(!invoices.length||!payments.length) return 0;
     const totalDays = invoices.reduce((a,inv)=>{
       const invDate = new Date(inv.date||'');
@@ -6338,11 +6246,11 @@ const CALC = {
     // §v1.1.157-FIX: Include ALL EXPENSE_ENTRIES types, not just 'payment' (was missing invoices/advances)
     // §v1.1.176: Phase 7 — use amount_paid_cents; fallback to old fields for pre-migration records
     const cashExpenses = _fromCents(
-      this._rc.get('EXPENSES')
+      DB.all('EXPENSES')
         .filter(e=>inPeriod(e.date||''))
         .reduce((a,e)=>a+(typeof e.amount_paid_cents==='number' ? e.amount_paid_cents : _toCents(e.amt||0)),0)
       +
-      this._rc.get('EXPENSE_ENTRIES')
+      DB.all('EXPENSE_ENTRIES')
         .filter(en=>inPeriod(en.date||''))
         .reduce((a,en)=>{
           if(typeof en.amount_paid_cents==='number') return a+en.amount_paid_cents;
@@ -6367,7 +6275,7 @@ const CALC = {
     // All other branches in this function already use cents — this was the single remaining
     // parseFloat outlier. Using integer cents eliminates float drift (e.g. 10.05 → 1005 cents).
     const supplierPayments = _fromCents(
-      this._rc.get('SUPPLIER_PAYMENTS')
+      DB.all('SUPPLIER_PAYMENTS')
         .filter(p=>inPeriod(p.date||'') && p.paymentType!=='balance_adjustment')
         .reduce((a,p)=>a+_toCents(p.amount||0),0)
     );
@@ -6382,7 +6290,7 @@ const CALC = {
     // 5. Net Exchange Differences Cash Flow (exchange returns with cash settlement)
     // §v1.1.224: accumulate in cents to eliminate float drift (was parseFloat direct accumulation)
     const exchangeNet = _fromCents(
-      this._rc.get('PURCHASE_RETURNS')
+      DB.all('PURCHASE_RETURNS')
         .filter(r=>inPeriod(r.date||'') && r.handlingOption==='exchange' && r.settlementMethod==='cash')
         .reduce((a,r)=>{
           const diff = parseFloat(r.cashDifference||r.priceDifference||0);
@@ -6472,7 +6380,7 @@ const CALC = {
     };
 
     const allSaleInvs = this.getSales();
-    const allProds    = this._rc.get('PRODUCTS');
+    const allProds    = DB.all('PRODUCTS');
     const invById     = {};
     const invByNum    = {};
     allSaleInvs.forEach(i=>{ invById[i.id]=i; invByNum[i.num]=i; });
@@ -6528,7 +6436,7 @@ const CALC = {
     debtCollectedCOGS = _money(debtCollectedCOGS);
 
     // ── 3. Subtract COGS of returned cash-sale items ──
-    const allRets = this._rc.get('RETURNS');
+    const allRets = DB.all('RETURNS');
     let returnedCOGS = 0;
     allRets.forEach(r=>{
       if(!inPeriod(r.date||'')) return;
@@ -6545,11 +6453,11 @@ const CALC = {
     // §v1.1.161-FIX: Include ALL EXPENSE_ENTRIES types, not just 'payment'
     // §v1.1.176: Phase 7 — use amount_paid_cents; fallback to old fields for pre-migration records
     const cashExpenses = _fromCents(
-      this._rc.get('EXPENSES')
+      DB.all('EXPENSES')
         .filter(r=>inPeriod(r.date||''))
         .reduce((a,e)=>a+(typeof e.amount_paid_cents==='number' ? e.amount_paid_cents : _toCents(e.amt||0)),0)
       +
-      this._rc.get('EXPENSE_ENTRIES')
+      DB.all('EXPENSE_ENTRIES')
         .filter(en=>inPeriod(en.date||''))
         .reduce((a,en)=>{
           if(typeof en.amount_paid_cents==='number') return a+en.amount_paid_cents;
@@ -6623,15 +6531,15 @@ const CALC = {
 
   // حساب رصيد مورد واحد بالسنت (للاستخدام الداخلي)
   _supplierBalanceCents(supId){
-    const sup = this._rc.get('SUPPLIERS').find(s=>s.id===supId);
+    const sup = DB.all('SUPPLIERS').find(s=>s.id===supId);
     if(!sup) return 0;
-    const purchased = this._rc.get('PURCHASE_INVOICES')
+    const purchased = DB.all('PURCHASE_INVOICES')
       .filter(i=>i.supplierId===supId)
       .reduce((a,i)=>a+_toCents(i.total||0),0);
-    const paid = this._rc.get('SUPPLIER_PAYMENTS')
+    const paid = DB.all('SUPPLIER_PAYMENTS')
       .filter(p=>p.supplierId===supId)
       .reduce((a,p)=>a+_toCents(p.amount||0),0);
-    const returned = this._rc.get('PURCHASE_RETURNS')
+    const returned = DB.all('PURCHASE_RETURNS')
       .filter(r=>r.supplierId===supId)
       .reduce((a,r)=>a+_toCents(r.totalReturnValue||0),0);
     // §v1.1.121-FIX2: Read openingBalance with fallback to legacy 'debt' field
@@ -6642,14 +6550,14 @@ const CALC = {
   // §UNIFY-2: Per-supplier purchase total (integer cents architecture)
   totalPurchasesForSupplier(supId){
     return _fromCents(
-      this._rc.get('PURCHASE_INVOICES').filter(i=>i.supplierId===supId).reduce((a,i)=>a+_toCents(i.total||0),0)
+      DB.all('PURCHASE_INVOICES').filter(i=>i.supplierId===supId).reduce((a,i)=>a+_toCents(i.total||0),0)
     );
   },
 
   // §UNIFY-3: Per-supplier payments total (integer cents architecture)
   totalPaymentsForSupplier(supId){
     return _fromCents(
-      this._rc.get('SUPPLIER_PAYMENTS').filter(p=>p.supplierId===supId).reduce((a,p)=>a+_toCents(p.amount||0),0)
+      DB.all('SUPPLIER_PAYMENTS').filter(p=>p.supplierId===supId).reduce((a,p)=>a+_toCents(p.amount||0),0)
     );
   },
 
@@ -6660,16 +6568,21 @@ const CALC = {
 
   // إجمالي ديون جميع الموردين (دولار)
   totalSupplierDebts(){
-    const suppliers = this._rc.get('SUPPLIERS');
+    const suppliers = DB.all('SUPPLIERS');
     const totalCents = suppliers.reduce((a,sup)=>a+Math.max(0,this._supplierBalanceCents(sup.id)),0);
     return _fromCents(totalCents);
   },
 
+  // §FIX-SUP: outstandingSupplierBalance — يستخدم المحرك المركزي
+  outstandingSupplierBalance(){
+    return this.totalSupplierDebts();
+  },
+
   // قائمة الموردين مع أرصدتهم — للعرض في صفحة الموردين وصفحة الديون والتقارير
   getSupplierDebtsList(){
-    const suppliers = this._rc.get('SUPPLIERS');
-    const invoices  = this._rc.get('PURCHASE_INVOICES');
-    const payments  = this._rc.get('SUPPLIER_PAYMENTS');
+    const suppliers = DB.all('SUPPLIERS');
+    const invoices  = DB.all('PURCHASE_INVOICES');
+    const payments  = DB.all('SUPPLIER_PAYMENTS');
     return suppliers.map(sup=>{
       const balanceCents = this._supplierBalanceCents(sup.id);
       const supInvs = invoices.filter(i=>i.supplierId===sup.id)
@@ -6689,10 +6602,10 @@ const CALC = {
 
   // §FIX-SUP: ملخص الموردين للـ KPIs — للعرض في صفحة الموردين
   suppliersSummary(thisMonthStart){
-    const allInvoices = this._rc.get('PURCHASE_INVOICES');
-    const allPayments = this._rc.get('SUPPLIER_PAYMENTS');
-    const allReturns  = this._rc.get('PURCHASE_RETURNS');
-    const suppliers   = this._rc.get('SUPPLIERS');
+    const allInvoices = DB.all('PURCHASE_INVOICES');
+    const allPayments = DB.all('SUPPLIER_PAYMENTS');
+    const allReturns  = DB.all('PURCHASE_RETURNS');
+    const suppliers   = DB.all('SUPPLIERS');
     const totalPurchasesThisMonth = allInvoices
       .filter(inv=>inv.date>=thisMonthStart)
       .reduce((a,inv)=>a+_toCents(inv.total||0),0);
@@ -6757,7 +6670,7 @@ const CALC = {
     // §v1.1.166: Use explicit double-check pattern for date filtering
     let supplierPaymentsCents = 0;
     try {
-      const allSupplierPayments = this._rc.get('SUPPLIER_PAYMENTS') || [];
+      const allSupplierPayments = DB.all('SUPPLIER_PAYMENTS') || [];
       supplierPaymentsCents = allSupplierPayments
         .filter(sp => {
           if (!sp) return false;
@@ -6782,7 +6695,7 @@ const CALC = {
     let operatingExpensesCents = 0;
     try {
       // Quick expenses (EXPENSES table)
-      const quickExpenses = this._rc.get('EXPENSES') || [];
+      const quickExpenses = DB.all('EXPENSES') || [];
       const quickExpensesCents = quickExpenses
         .filter(e => {
           if (!e) return false;
@@ -6793,7 +6706,7 @@ const CALC = {
         .reduce((sum, e) => sum + (typeof e.amount_paid_cents === 'number' ? e.amount_paid_cents : _toCents(e.amt || 0)), 0);
       
       // File expenses (EXPENSE_ENTRIES table)
-      const fileExpenses = this._rc.get('EXPENSE_ENTRIES') || [];
+      const fileExpenses = DB.all('EXPENSE_ENTRIES') || [];
       const fileExpensesCents = fileExpenses
         .filter(en => {
           if (!en) return false;
@@ -7140,7 +7053,7 @@ const GOOGLE_AUTH = {
         auto_select: false,
         cancel_on_tap_outside: true
       });
-    }catch(_){ console.warn('[GOOGLE_AUTH] google.accounts.id.initialize failed', _); }
+    }catch(_){}
   },
 
   // ── Kept for backward compatibility / credential response handling ──
@@ -7425,9 +7338,7 @@ const DRIVE_SYNC = (function(){
       // ── Cash/Transfer Sale → Sales tab ──
       if(_syncedIds.Sales.has(inv.id)) return;
       const itemsStr = items.map(it=>it.name+'×'+it.qty).join(', ');
-      // §v1.1.328: Use cents arithmetic to match FINANCIAL_ENGINE precision
-      const profitCents = _toCents(parseFloat(inv.total||0)) - _toCents(cost) - _toCents(parseFloat(inv.disc||0));
-      const profit = _fromCents(profitCents);
+      const profit = parseFloat(inv.total||0) - cost - parseFloat(inv.disc||0);
       const row = [inv.num||'',inv.date||'',inv.customer||'',inv.cashier||'',itemsStr,parseFloat(inv.total||0),parseFloat(cost.toFixed(2)),parseFloat(profit.toFixed(2)),parseFloat(inv.tax||0),parseFloat(inv.disc||0),inv.payType||'cash',ts];
       await _appendRows(sid, 'Sales', [row]);
       _syncedIds.Sales.add(inv.id);
@@ -8239,22 +8150,6 @@ const APP = {
     this.goTo('dashboard');
     UI.updateBadges();
     UI.updatePendingBadge();
-    // §v1.1.330: One-time portable mode hint — shown once after first few data entries
-    setTimeout(function() {
-      try {
-        const _hintShown = localStorage.getItem('spos_portable_hint_shown');
-        if (_hintShown) return;
-        const _portableActive = (typeof FINANCIAL_ENGINE !== 'undefined' && FINANCIAL_ENGINE.PORTABLE && FINANCIAL_ENGINE.PORTABLE.isEnabled())
-          || localStorage.getItem('spos_portable_enabled') === '1';
-        if (_portableActive) return; // already using portable mode
-        const _totalRecs = (DB.count('INVOICES') || 0) + (DB.count('PRODUCTS') || 0) + (DB.count('EXPENSES') || 0);
-        if (_totalRecs < 5) return; // too early — not enough data yet
-        localStorage.setItem('spos_portable_hint_shown', '1');
-        setTimeout(function() {
-          TOAST.warn('💡 نصيحة: فعّل "الملف المحمول" من صفحة الإعدادات لحماية بياناتك من فقدان التخزين.');
-        }, 2000);
-      } catch(_) {}
-    }, 3000);
     // ── Live clock (date + time + day in topbar) ──
     (function _startClock(){
       function _tick(){
@@ -8279,20 +8174,6 @@ const APP = {
     // FileSystemFileHandle is in-memory only — cannot survive page reload. This nudge fires
     // once per session when portable mode was previously enabled, prompting re-attachment.
     setTimeout(()=>{ try{ FINANCIAL_ENGINE.PORTABLE.tryReattach(); }catch(_){} }, FOUR_SEC);
-    // §v1.1.329: Daily auto-prune — runs once per calendar day, 8s after boot (non-blocking)
-    // Keeps OPS_LOG ≤ 90 days of system events + all financial events forever
-    // Keeps INVENTORY_MOVEMENTS ≤ 180 days (stock already correct after rebuild)
-    setTimeout(()=>{
-      try{
-        const _pruneKey = 'spos_last_prune';
-        const _today = new Date().toLocaleDateString('en-CA');
-        if(localStorage.getItem(_pruneKey) === _today) return; // already pruned today
-        const r1 = EVENTS.prune(90);
-        const r2 = EVENTS.pruneMovements(180);
-        localStorage.setItem(_pruneKey, _today);
-        if(window.DEV_MODE) console.log('[AUTO-PRUNE] OPS_LOG:', r1, '| MOVEMENTS:', r2);
-      }catch(pruneErr){ console.warn('[AUTO-PRUNE] failed:', pruneErr); }
-    }, 8000);
     // ── Deferred accounting audit on every login (non-blocking, 2s delay) ──
     // Catches drift accumulated since last session without slowing UI load.
     setTimeout(()=>{
@@ -8989,29 +8870,17 @@ const DASH = {
     // §FIX-DASH: حساب الديون المتأخرة بالـ cents
     if(ov.length) alerts.push(`<div class="al alw"><i class="fa-solid fa-clock"></i><span>${ov.length} عميل ديون متأخرة بقيمة ${_fromCents(ov.reduce((a,d)=>a+_toCents(d.remain||0),0)).toFixed(2)} ${s}</span></div>`);
     if(totalDebt>0) alerts.push(`<div class="al alw"><i class="fa-solid fa-hand-holding-dollar"></i><span>إجمالي الديون المستحقة: <strong>${totalDebt.toFixed(2)} ${s}</strong></span></div>`);
-    // §v1.1.330: Storage usage banner — warn at ≥80%, block at ≥95%
-    try {
-      const _su = _storageUsage();
-      if (_su.pct >= 95) {
-        alerts.push(`<div class="al ale" style="cursor:default"><i class="fa-solid fa-circle-exclamation"></i><span><strong>مساحة التخزين المحلية ممتلئة تقريباً (${_su.pct}%)</strong> — لا يمكن حفظ بيانات جديدة. <a href="javascript:void(0)" onclick="goTo('settings')" style="color:inherit;text-decoration:underline;font-weight:700">فعّل الملف المحمول الآن</a> أو <a href="javascript:void(0)" onclick="goTo('backup')" style="color:inherit;text-decoration:underline">احذف نسخاً قديمة</a>.</span></div>`);
-        _storageQuotaAlert();
-      } else if (_su.pct >= 80) {
-        const usedMB = (_su.used / (1024*1024)).toFixed(1);
-        alerts.push(`<div class="al alw" style="cursor:default"><i class="fa-solid fa-triangle-exclamation"></i><span>⚠️ مساحة التخزين المحلية تقترب من الامتلاء (${_su.pct}% — ${usedMB} MB). <a href="javascript:void(0)" onclick="goTo('backup')" style="color:inherit;text-decoration:underline;font-weight:700">الرجاء استخدام الملف المحمول (Portable Mode) لحماية بياناتك</a>.</span></div>`);
-      }
-    } catch(_) {}
     const alertEl = document.getElementById('dashAlerts');
     if(alertEl) alertEl.innerHTML = alerts.join('');
     // Chart (7 days)
-    const _allInv = DB.all('INVOICES'); // §v1.1.332: fetch once per render — was called 2× (chart loop + top products)
     const days=[], vals=[];
-    for(let i=6;i>=0;i--){ const d=new Date(); d.setDate(d.getDate()-i); const ds=fmtLocalDate(d.toISOString()); days.push(d.toLocaleDateString('ar-SA',{weekday:'short'})); vals.push(_allInv.filter(inv=>inv.date===ds&&inv.type==='بيع').reduce((a,inv)=>a+(typeof inv.total_c==='number'?inv.total_c/100:parseFloat(inv.total||0)),0)); } // §PHASE1-FIX: use total_c (integer cents) — matches CALC engine
+    for(let i=6;i>=0;i--){ const d=new Date(); d.setDate(d.getDate()-i); const ds=fmtLocalDate(d.toISOString()); days.push(d.toLocaleDateString('ar-SA',{weekday:'short'})); vals.push(DB.all('INVOICES').filter(inv=>inv.date===ds&&inv.type==='بيع').reduce((a,inv)=>a+(typeof inv.total_c==='number'?inv.total_c/100:parseFloat(inv.total||0)),0)); } // §PHASE1-FIX: use total_c (integer cents) — matches CALC engine
     const mx=Math.max(...vals,1);
     const chartEl=document.getElementById('salesChart'); if(chartEl) chartEl.innerHTML=vals.map((v,i)=>`<div class="cbar ${i===6?'gold':''}" style="height:${Math.max(v/mx*100,3)}%" title="${days[i]}: ${v.toFixed(2)} ${s}"></div>`).join('');
     const lblsEl=document.getElementById('salesLbls'); if(lblsEl) lblsEl.innerHTML=days.map(d=>`<div class="clbl">${d}</div>`).join('');
     // Top products
     const ps={};
-    _allInv.filter(i=>i.type==='بيع' && i.status!=='ملغاة').forEach(inv=>{ let items=[]; try{items=JSON.parse(inv.items||'[]');}catch(_){} items.forEach(it=>{ ps[it.name]=(ps[it.name]||0)+it.qty; }); });
+    DB.all('INVOICES').filter(i=>i.type==='بيع' && i.status!=='ملغاة').forEach(inv=>{ let items=[]; try{items=JSON.parse(inv.items||'[]');}catch(_){} items.forEach(it=>{ ps[it.name]=(ps[it.name]||0)+it.qty; }); });
     const topP=Object.entries(ps).sort((a,b)=>b[1]-a[1]).slice(0,5);
     const tpEl=document.getElementById('topProds'); if(tpEl) tpEl.innerHTML=topP.map(([nm,qty])=>`<div class="srow"><span class="slbl">${escapeHtml(nm)}</span><span class="sval">${qty}</span></div>`).join('')||'<div class="empty"><i class="fa-solid fa-box"></i><p>لا توجد مبيعات</p></div>';
     // Pay methods — event-driven, uses CALC.paymentMethodBreakdown()
@@ -9409,15 +9278,13 @@ const DASH = {
     const _rawPmb = _guard('paymentMethodBreakdown', ()=>CALC.paymentMethodBreakdown(), _pmb0);
     const pmb = {..._pmb0, ..._rawPmb};
     // §v1.1.249 #51: sales section respects active filter instead of always showing last 7 days
-    // §v1.1.332: fetch INVOICES once for PDF export — was called 5× across sales/products sections
-    const _allInvPdf = DB.all('INVOICES');
     let salesChartRows = '';
     let salesSectionTitle = '⑦ مبيعات آخر 7 أيام';
     if(!f && !t){
       // §v1.1.250: "الكل" — show ALL historical monthly data (earliest sale → today), no 6-month cap
       salesSectionTitle = '⑦ ملخص المبيعات الشهرية (كل الوقت)';
       const _allMonthsPdf = {};
-      _allInvPdf.filter(inv=>inv.date&&inv.type==='بيع'&&inv.status!=='ملغاة').forEach(inv=>{
+      DB.all('INVOICES').filter(inv=>inv.date&&inv.type==='بيع'&&inv.status!=='ملغاة').forEach(inv=>{
         const mk = inv.date.slice(0,7);
         _allMonthsPdf[mk] = (_allMonthsPdf[mk]||0) + (typeof inv.total_c==='number'?inv.total_c/100:parseFloat(inv.total||0));
       });
@@ -9441,14 +9308,14 @@ const DASH = {
           const d=new Date(dFrom); d.setDate(dFrom.getDate()+i);
           const ds=fmtLocalDate(d.toISOString());
           const dayName=d.toLocaleDateString('ar-SA',{weekday:'short'});
-          const v=_allInvPdf.filter(inv=>inv.date===ds&&inv.type==='بيع')
+          const v=DB.all('INVOICES').filter(inv=>inv.date===ds&&inv.type==='بيع')
             .reduce((a,inv)=>a+(typeof inv.total_c==='number'?inv.total_c/100:parseFloat(inv.total||0)),0);
           salesChartRows+=`<tr><td>${dayName} ${ds}</td><td style="text-align:left;font-family:monospace">${v.toFixed(2)} ${s}</td></tr>`;
         }
       } else {
         salesSectionTitle = `⑦ المبيعات الشهرية (${label})`;
         const months={};
-        _allInvPdf.filter(inv=>inv.date&&inv.date>=fromDate&&inv.date<=toDate&&inv.type==='بيع').forEach(inv=>{
+        DB.all('INVOICES').filter(inv=>inv.date&&inv.date>=fromDate&&inv.date<=toDate&&inv.type==='بيع').forEach(inv=>{
           const mk=inv.date.slice(0,7);
           months[mk]=(months[mk]||0)+(typeof inv.total_c==='number'?inv.total_c/100:parseFloat(inv.total||0));
         });
@@ -9464,13 +9331,13 @@ const DASH = {
         const d=new Date(); d.setDate(d.getDate()-i);
         const ds=fmtLocalDate(d.toISOString());
         const dayName=d.toLocaleDateString('ar-SA',{weekday:'short'});
-        const v=_allInvPdf.filter(inv=>inv.date===ds&&inv.type==='بيع')
+        const v=DB.all('INVOICES').filter(inv=>inv.date===ds&&inv.type==='بيع')
           .reduce((a,inv)=>a+(typeof inv.total_c==='number'?inv.total_c/100:parseFloat(inv.total||0)),0);
         salesChartRows+=`<tr><td>${dayName}</td><td style="text-align:left;font-family:monospace">${v.toFixed(2)} ${s}</td></tr>`;
       }
     }
     // ── Top products ──
-    const ps={}; _allInvPdf.filter(i=>i.type==='بيع'&&i.status!=='ملغاة').forEach(inv=>{ let it=[]; try{it=JSON.parse(inv.items||'[]');}catch(_){} it.forEach(x=>{ ps[x.name]=(ps[x.name]||0)+x.qty; }); });
+    const ps={}; DB.all('INVOICES').filter(i=>i.type==='بيع'&&i.status!=='ملغاة').forEach(inv=>{ let it=[]; try{it=JSON.parse(inv.items||'[]');}catch(_){} it.forEach(x=>{ ps[x.name]=(ps[x.name]||0)+x.qty; }); });
     const topP = Object.entries(ps).sort((a,b)=>b[1]-a[1]).slice(0,10);
     const topPRows = topP.map(([nm,qty],i)=>`<tr><td>${i+1}. ${escapeHtml(nm)}</td><td style="text-align:left;font-family:monospace">${qty}</td></tr>`).join('');
     // ── Stock alerts ──
@@ -9663,7 +9530,6 @@ ${evtRows?`<div class="sec">⑬ آخر العمليات (10 أحداث)</div>
     const s = getCurr();
     const {fromDate, toDate, label} = this._getFilter();
     const f=fromDate||null, t=toDate||null;
-    const _allInvCsv = DB.all('INVOICES'); // §v1.1.332: fetch once for CSV export — was called 5× across sales/products sections
     // ── Core KPI data ── §v1.1.214: guard every CALC call individually
     let totalSales=0; try{ totalSales=CALC.totalSales(f,t)||0; }catch(_){ console.warn('[CSV] totalSales:',_); }
     let totalExp=0;   try{ totalExp=CALC.totalExpenses(f,t)||0; }catch(_){ console.warn('[CSV] totalExp:',_); }
@@ -9778,7 +9644,7 @@ ${evtRows?`<div class="sec">⑬ آخر العمليات (10 أحداث)</div>
         lines.push(...sep('⑦ ملخص المبيعات الشهرية (كل الوقت)'));
         lines.push(row('الشهر', 'المبيعات ('+s+')'));
         const _allMonthsCsv = {};
-        _allInvCsv.filter(inv=>inv.date&&inv.type==='بيع'&&inv.status!=='ملغاة').forEach(inv=>{
+        DB.all('INVOICES').filter(inv=>inv.date&&inv.type==='بيع'&&inv.status!=='ملغاة').forEach(inv=>{
           const mk=inv.date.slice(0,7);
           _allMonthsCsv[mk]=(_allMonthsCsv[mk]||0)+(typeof inv.total_c==='number'?inv.total_c/100:parseFloat(inv.total||0));
         });
@@ -9801,7 +9667,7 @@ ${evtRows?`<div class="sec">⑬ آخر العمليات (10 أحداث)</div>
             const d=new Date(dFrom); d.setDate(dFrom.getDate()+i);
             const ds=fmtLocalDate(d.toISOString());
             const dayName=d.toLocaleDateString('ar-SA',{weekday:'long'});
-            const v=_allInvCsv.filter(inv=>inv.date===ds&&inv.type==='بيع')
+            const v=DB.all('INVOICES').filter(inv=>inv.date===ds&&inv.type==='بيع')
               .reduce((a,inv)=>a+(typeof inv.total_c==='number'?inv.total_c/100:parseFloat(inv.total||0)),0);
             lines.push(row(dayName+' '+ds, v.toFixed(2)));
           }
@@ -9809,7 +9675,7 @@ ${evtRows?`<div class="sec">⑬ آخر العمليات (10 أحداث)</div>
           lines.push(...sep('⑦ المبيعات الشهرية ('+label+')'));
           lines.push(row('الشهر', 'المبيعات ('+s+')'));
           const months={};
-          _allInvCsv.filter(inv=>inv.date&&inv.date>=fromDate&&inv.date<=toDate&&inv.type==='بيع').forEach(inv=>{
+          DB.all('INVOICES').filter(inv=>inv.date&&inv.date>=fromDate&&inv.date<=toDate&&inv.type==='بيع').forEach(inv=>{
             const mk=inv.date.slice(0,7);
             months[mk]=(months[mk]||0)+(typeof inv.total_c==='number'?inv.total_c/100:parseFloat(inv.total||0));
           });
@@ -9823,11 +9689,11 @@ ${evtRows?`<div class="sec">⑬ آخر العمليات (10 أحداث)</div>
         // Fallback: last 7 days
         lines.push(...sep('⑦ مبيعات آخر 7 أيام'));
         lines.push(row('اليوم', 'المبيعات ('+s+')'));
-        for(let i=6;i>=0;i--){ const d=new Date(); d.setDate(d.getDate()-i); const ds=fmtLocalDate(d.toISOString()); const dayName=d.toLocaleDateString('ar-SA',{weekday:'long'}); const v=_allInvCsv.filter(inv=>inv.date===ds&&inv.type==='بيع').reduce((a,inv)=>a+(typeof inv.total_c==='number'?inv.total_c/100:parseFloat(inv.total||0)),0); lines.push(row(dayName+' '+ds, v.toFixed(2))); }
+        for(let i=6;i>=0;i--){ const d=new Date(); d.setDate(d.getDate()-i); const ds=fmtLocalDate(d.toISOString()); const dayName=d.toLocaleDateString('ar-SA',{weekday:'long'}); const v=DB.all('INVOICES').filter(inv=>inv.date===ds&&inv.type==='بيع').reduce((a,inv)=>a+(typeof inv.total_c==='number'?inv.total_c/100:parseFloat(inv.total||0)),0); lines.push(row(dayName+' '+ds, v.toFixed(2))); }
       }
     }
     // ⑧ Top products
-    const ps2={}; _allInvCsv.filter(i=>i.type==='بيع'&&i.status!=='ملغاة').forEach(inv=>{ let it=[]; try{it=JSON.parse(inv.items||'[]');}catch(_){} it.forEach(x=>{ ps2[x.name]=(ps2[x.name]||0)+x.qty; }); });
+    const ps2={}; DB.all('INVOICES').filter(i=>i.type==='بيع'&&i.status!=='ملغاة').forEach(inv=>{ let it=[]; try{it=JSON.parse(inv.items||'[]');}catch(_){} it.forEach(x=>{ ps2[x.name]=(ps2[x.name]||0)+x.qty; }); });
     const topP2=Object.entries(ps2).sort((a,b)=>b[1]-a[1]).slice(0,20);
     if(topP2.length){ lines.push(...sep('⑧ أفضل المنتجات (حسب الكمية)')); lines.push(row('المنتج','الكمية المباعة')); topP2.forEach(([nm,qty],i)=>lines.push(row(`${i+1}. ${nm}`, String(qty)))); }
     // ⑨ Payment methods
@@ -10301,7 +10167,7 @@ const POS = {
     UI.showModal('pdfModal');
   }
 };
-// [v1.1.331] HIGH-1: حُذف تعريف setPay() المكرر هنا — النسخة الآمنة موجودة أسفل مع باقي Global wrappers
+function setPay(el,t){ POS.setPay(el,t); }
 function confirmSale(){ POS.confirmSale(); }
 function clearBill(){ POS.clear(); POS.render(); }
 function openPDF(){ POS.openPDF(); }
@@ -16155,9 +16021,9 @@ const FIRESTORE_BACKUP = (function() {
   // §v1.1.263: Update compression result badge in the backup card
   // caseType: 'saved' | 'small' | 'unsupported'
   function _setCompressStatus(caseType, pct) {
-    const el = document.getElementById('fbCompressStatus');
+    var el = document.getElementById('fbCompressStatus');
     if (!el) return;
-    const cfg = {
+    var cfg = {
       saved:       { bg: 'rgba(16,185,129,.08)', bdr: 'rgba(16,185,129,.22)', color: '#6ee7b7',
                      text: '✅ مزامنة ناجحة: تم توفير ' + pct + '% من البيانات' },
       small:       { bg: 'rgba(16,185,129,.08)', bdr: 'rgba(16,185,129,.22)', color: '#6ee7b7',
@@ -16294,11 +16160,9 @@ const FIRESTORE_BACKUP = (function() {
     if (!_ready() || _syncing) return;
 
     // §v1.1.285: Fix 4 — offline guard: skip sync immediately, show warning
-    // §v1.1.334: Added user-facing toast — pending flag preserved so schedulePush() retries later
     if (!navigator.onLine) {
       console.warn('[SYNC] No internet connection — skipping push');
       _setStatus('fa-wifi', 'لا اتصال بالإنترنت', '#f59e0b');
-      if(!opts.silent) TOAST.warn('⚠️ لا يوجد اتصال بالإنترنت، سيتم إعادة المحاولة لاحقاً');
       return;
     }
 
@@ -16312,7 +16176,7 @@ const FIRESTORE_BACKUP = (function() {
     _syncing = true;
     _fallbackNotified = false; // §v1.1.288: reset per-session toast flag
     _compressionTimedOut = false; // §v1.1.309: reset per-push compression failure flag
-    if(window.DEV_MODE) console.log('[SYNC] push() started');
+    console.log('[SYNC] push() started');
     _setStatus('fa-rotate fa-spin', 'جارٍ المزامنة...', 'var(--cyan)');
 
     // §v1.1.285: Fix 2 — kill-switch: force-reset _syncing after 134s if push() hangs
@@ -16339,7 +16203,7 @@ const FIRESTORE_BACKUP = (function() {
       // §v1.1.288: Show non-blocking "compressing" indicator so user knows the app is working
       // §v1.1.309: Timeout reduced 44s→14s; one retry attempt before raw-JSON fallback
       _setStatus('fa-gear fa-spin', 'جاري ضغط البيانات...', 'var(--gold2)');
-      if(window.DEV_MODE) console.log('[SYNC] Compressing data (' + (jsonStr.length/1024).toFixed(1) + 'KB)...');
+      console.log('[SYNC] Compressing data (' + (jsonStr.length/1024).toFixed(1) + 'KB)...');
       let payload, isCompressed;
       let _compressAttempt = 0;
       while (_compressAttempt < 2) {
@@ -16348,12 +16212,12 @@ const FIRESTORE_BACKUP = (function() {
           const _cr = await _withTimeout(_compress(jsonStr), 14000); // §v1.1.309: 14s (was 44s) — quicker fallback on hanging mobile WebViews
           payload      = _cr.data;
           isCompressed = _cr.compressed;
-          if(window.DEV_MODE) console.log('[SYNC] Compression done (attempt ' + _compressAttempt + ') — ' + (isCompressed ? 'compressed' : 'raw') + ' ' + (payload.length/1024).toFixed(1) + 'KB');
+          console.log('[SYNC] Compression done (attempt ' + _compressAttempt + ') — ' + (isCompressed ? 'compressed' : 'raw') + ' ' + (payload.length/1024).toFixed(1) + 'KB');
           break; // success — exit retry loop
         } catch(_compErr) {
           console.warn('[SYNC] ⚠️ Compression attempt ' + _compressAttempt + ' timed out:', _compErr.message);
           if (_compressAttempt < 2) {
-            if(window.DEV_MODE) console.log('[SYNC] Retrying compression once...');
+            console.log('[SYNC] Retrying compression once...');
             continue; // try once more
           }
           // Both attempts failed — fall back to raw JSON
@@ -16373,11 +16237,11 @@ const FIRESTORE_BACKUP = (function() {
 
       // Read old chunkCount to delete stale chunks
       // §v1.1.284: _withTimeout also on metaRef.get() — prevents hanging before batch.commit
-      if(window.DEV_MODE) console.log('[SYNC] Getting meta...');
+      console.log('[SYNC] Getting meta...');
       let oldCount = 0;
       try {
         const m = await _withTimeout(metaRef.get(), 15000);
-        if(window.DEV_MODE) console.log('[SYNC] Meta retrieved, exists=' + (m ? m.exists : 'null'));
+        console.log('[SYNC] Meta retrieved, exists=' + (m ? m.exists : 'null'));
         if (m && m.exists) oldCount = m.data().chunkCount || 0;
       } catch(_) { console.warn('[SYNC] metaRef.get() timed out or failed — proceeding without oldCount'); }
 
@@ -16411,9 +16275,9 @@ const FIRESTORE_BACKUP = (function() {
         email:           window._fbCurrentUser.email || ''
       });
 
-      if(window.DEV_MODE) console.log('[SYNC] Committing batch (' + chunks.length + ' chunks)...');
+      console.log('[SYNC] Committing batch (' + chunks.length + ' chunks)...');
       await _withTimeout(batch.commit(), 60000); // §v1.1.284: 60s hard timeout — prevents permanent lock if Firestore freezes
-      if(window.DEV_MODE) console.log('[SYNC] Batch committed successfully');
+      console.log('[SYNC] Batch committed successfully');
 
       _lastPushTime = Date.now(); // §v1.1.272: record successful push time
       _retryCount   = 0;          // §v1.1.284: reset retry counter after success
@@ -16428,7 +16292,7 @@ const FIRESTORE_BACKUP = (function() {
       const pct = isCompressed ? ' · ' + Math.round((1 - payload.length / jsonStr.length) * 100) + '% ضغط' : ' · بدون ضغط';
       _setStatus('fa-cloud-arrow-up', 'مزامنة ' + ts, 'var(--green)');
       if (!opts.silent) TOAST.ok('✓ تمت المزامنة بنجاح'); // §v1.1.289: confirm manual sync to user
-      if(window.DEV_MODE) console.log('[SYNC] push() completed ✓');
+      console.log('[SYNC] push() completed ✓');
 
       // §v1.1.263: Update compression badge — distinguish four states
       // §v1.1.309: _compressionTimedOut guard prevents overwriting 'fallback' with 'small'
@@ -16463,7 +16327,7 @@ const FIRESTORE_BACKUP = (function() {
       // §v1.1.284: Silent auto-sync failure — retry with exponential backoff
       if (opts.silent && _retryCount < MAX_RETRIES) {
         const delay = RETRY_BASE_MS * Math.pow(2, _retryCount);
-        if(window.DEV_MODE) console.log('[SYNC] Retry ' + (_retryCount + 1) + '/' + MAX_RETRIES + ' in ' + (delay/1000).toFixed(1) + 's');
+        console.log('[SYNC] Retry ' + (_retryCount + 1) + '/' + MAX_RETRIES + ' in ' + (delay/1000).toFixed(1) + 's');
         _retryTimer = setTimeout(function() { push({ silent: true }); }, delay);
         _retryCount++;
         // §v1.1.287: Notify user on first silent failure so they know sync is struggling
@@ -16512,7 +16376,7 @@ const FIRESTORE_BACKUP = (function() {
 
     // §v1.1.289: Respect _autoSyncEnabled — user may disable auto-sync via UI button
     if (!_autoSyncEnabled) {
-      if(window.DEV_MODE) console.log('[SYNC] schedulePush blocked — auto-sync is disabled by user');
+      console.log('[SYNC] schedulePush blocked — auto-sync is disabled by user');
       return;
     }
 
@@ -16700,7 +16564,7 @@ const FIRESTORE_BACKUP = (function() {
     _setStatus('fa-rotate', 'المزامنة التلقائية مفعّلة', 'var(--green)');
     TOAST.ok('✓ تم تفعيل المزامنة التلقائية — ستبدأ خلال 30 ثانية من آخر تعديل');
     schedulePush(); // queue a sync via the normal 30s debounce path
-    if(window.DEV_MODE) console.log('[SYNC] Auto-sync re-enabled by user');
+    console.log('[SYNC] Auto-sync re-enabled by user');
   }
 
   return { push: push, schedulePush: schedulePush, pull: pull,
@@ -16802,12 +16666,12 @@ const FIRESTORE_BACKUP = (function() {
 // Queries entire backups/ collection (one read per user). 24h cache.
 // Email-gated, silent failure, verbose F12 logging. Zero cost for regular users.
 const ADMIN_STORAGE = (function(){
-  const ADMIN_EMAIL   = 'hamzaeldibo@gmail.com';
-  const CACHE_TTL_MS  = 24 * 60 * 60 * 1000;  // 24 hours
-  const FREE_TIER_MB  = 1024;
+  var ADMIN_EMAIL   = 'hamzaeldibo@gmail.com';
+  var CACHE_TTL_MS  = 24 * 60 * 60 * 1000;  // 24 hours
+  var FREE_TIER_MB  = 1024;
 
   function _isAdmin(){
-    const u = window._fbCurrentUser;
+    var u = window._fbCurrentUser;
     return !!(u && u.email === ADMIN_EMAIL);
   }
 
@@ -16818,9 +16682,9 @@ const ADMIN_STORAGE = (function(){
 
   // Human-readable cache age for asmUpdatedAt label
   function _fmtCacheAge(ts){
-    const diffMs = Date.now() - ts;
-    const diffH  = diffMs / (1000 * 60 * 60);
-    const diffM  = diffMs / (1000 * 60);
+    var diffMs = Date.now() - ts;
+    var diffH  = diffMs / (1000 * 60 * 60);
+    var diffM  = diffMs / (1000 * 60);
     if(diffH >= 1)  return 'منذ ' + Math.round(diffH) + ' ساعة';
     if(diffM >= 1)  return 'منذ ' + Math.round(diffM) + ' دقيقة';
     return 'للتو';
@@ -16829,33 +16693,33 @@ const ADMIN_STORAGE = (function(){
   // §v1.1.268: Read all meta docs from backups/ (1 read per user)
   async function _fetchMetrics(){
     if(!window._fbCurrentUser) return null;
-    const snap = await window._fbDb.collection('backups').get();
+    var snap = await window._fbDb.collection('backups').get();
     if(snap.empty) return { noBackup: true };
-    let totalStored = 0, totalOrig = 0, compUsers = 0, userCount = 0;
+    var totalStored = 0, totalOrig = 0, compUsers = 0, userCount = 0;
     snap.forEach(function(doc){
-      const m = doc.data();
+      var m = doc.data();
       totalStored += (m.compressedBytes || m.sizeBytes || 0);
       totalOrig   += (m.sizeBytes || 0);
       if(m.isCompressed) compUsers++;
       userCount++;
     });
-    let avgComprPct = null;
+    var avgComprPct = null;
     if(compUsers > 0 && totalOrig > 0 && totalStored < totalOrig)
       avgComprPct = Math.round((1 - totalStored / totalOrig) * 100);
     return { totalStored: totalStored, userCount: userCount,
              compUsers: compUsers, avgComprPct: avgComprPct };
   }
 
-  function _set(id, val){ const el=document.getElementById(id); if(el) el.textContent=val; }
+  function _set(id, val){ var el=document.getElementById(id); if(el) el.textContent=val; }
 
   function _paint(data, cacheTs){
     if(!document.getElementById('adminStorageMonitor')) return;
-    const bar    = document.getElementById('asmProgressBar');
-    const pctEl  = document.getElementById('asmPct');
-    const avgEl  = document.getElementById('asmAvgCompr');
-    const compr  = document.getElementById('asmCompression');
-    const upEl   = document.getElementById('asmUpdatedAt');
-    const ageStr = cacheTs ? ('آخر تحديث: ' + _fmtCacheAge(cacheTs)) : '—';
+    var bar    = document.getElementById('asmProgressBar');
+    var pctEl  = document.getElementById('asmPct');
+    var avgEl  = document.getElementById('asmAvgCompr');
+    var compr  = document.getElementById('asmCompression');
+    var upEl   = document.getElementById('asmUpdatedAt');
+    var ageStr = cacheTs ? ('آخر تحديث: ' + _fmtCacheAge(cacheTs)) : '—';
 
     if(!data || data.noBackup){
       _set('asmUsed',     'لا توجد بيانات');
@@ -16868,9 +16732,9 @@ const ADMIN_STORAGE = (function(){
       return;
     }
 
-    const usedMB = data.totalStored / (1024 * 1024);
-    const pct    = Math.min((usedMB / FREE_TIER_MB) * 100, 100);
-    const color  = pct < 50 ? 'var(--green)' : pct < 80 ? 'var(--gold)' : 'var(--red)';
+    var usedMB = data.totalStored / (1024 * 1024);
+    var pct    = Math.min((usedMB / FREE_TIER_MB) * 100, 100);
+    var color  = pct < 50 ? 'var(--green)' : pct < 80 ? 'var(--gold)' : 'var(--red)';
 
     _set('asmUsed',  _fmtMB(data.totalStored) + ' / 1 GB');
     _set('asmUsers', data.userCount + ' مستخدمين');
@@ -16894,33 +16758,33 @@ const ADMIN_STORAGE = (function(){
   }
 
   function show(){
-    const mon=document.getElementById('adminStorageMonitor');
+    var mon=document.getElementById('adminStorageMonitor');
     if(!_isAdmin()){ if(mon) mon.style.display='none'; return; }
     if(mon) mon.style.display='';
     refresh(false);
   }
 
   function hide(){
-    const mon=document.getElementById('adminStorageMonitor');
+    var mon=document.getElementById('adminStorageMonitor');
     if(mon) mon.style.display='none';
   }
 
   async function refresh(force){
     if(!_isAdmin()) return;
-    const cache = window._adminStorageCache;
+    var cache = window._adminStorageCache;
     if(!force && cache && (Date.now()-cache.ts < CACHE_TTL_MS)){
-      const ageH=((Date.now()-cache.ts)/3600000).toFixed(1);
-      if(window.DEV_MODE) console.log('[ADMIN_STORAGE] [cache] age:'+ageH+'h/24h. ADMIN_STORAGE.refresh(true) to force.');
+      var ageH=((Date.now()-cache.ts)/3600000).toFixed(1);
+      console.log('[ADMIN_STORAGE] [cache] age:'+ageH+'h/24h. ADMIN_STORAGE.refresh(true) to force.');
       _paint(cache.data, cache.ts); return;
     }
-    if(window.DEV_MODE) console.log('[ADMIN_STORAGE] [fetch] backups/ collection'+(force?' (forced)':'')+'...');
+    console.log('[ADMIN_STORAGE] [fetch] backups/ collection'+(force?' (forced)':'')+'...');
     try{
-      const data = await _fetchMetrics();
+      var data = await _fetchMetrics();
       window._adminStorageCache = { ts: Date.now(), data: data };
       if(data && data.noBackup){
-        if(window.DEV_MODE) console.log('[ADMIN_STORAGE] [ok] No backups in collection.');
+        console.log('[ADMIN_STORAGE] [ok] No backups in collection.');
       } else if(data){
-        if(window.DEV_MODE) console.log('[ADMIN_STORAGE] [ok] total:'+_fmtMB(data.totalStored)
+        console.log('[ADMIN_STORAGE] [ok] total:'+_fmtMB(data.totalStored)
           +' | users:'+data.userCount
           +' | compressed:'+data.compUsers+'/'+data.userCount
           +' | avgCompr:'+(data.avgComprPct!==null?data.avgComprPct+'%':'n/a'));
@@ -17319,14 +17183,8 @@ const JRNL = {
       'INVOICE_VOID':'bro', // §VOID-DESC: red — cancellation event
       'DEBT_DISCOUNT':'bvl', // §DISCOUNT: violet — debt reduction event
     };
-    // §v1.1.333 O(N×M) FIX — pre-index lookup tables once before the render loop
-    // Previously DB.all('USERS'), DB.all('INVOICES'), DB.all('SUPPLIERS') were called
-    // inside filtered.map() → O(N×M). Now built once as Maps → O(N+M).
-    const _usersMap       = new Map(DB.all('USERS').map(u=>[u.id, u]));
-    const _invoicesByNum  = new Map(DB.all('INVOICES').map(i=>[i.num, i]));
-    const _suppliersMap   = new Map(DB.all('SUPPLIERS').map(x=>[x.id, x]));
-    // §6 — Supplier name helper (uses pre-built Map — O(1) per call)
-    const _supName = (id) => { try{ return _suppliersMap.get(id)?.name||id||'—'; }catch(_){ return id||'—'; } };
+    // §6 — Supplier name helper
+    const _supName = (id) => { try{ return DB.all('SUPPLIERS').find(x=>x.id===id)?.name||id||'—'; }catch(_){ return id||'—'; } };
     // §7 — Generate Arabic description for any event
     const _arDesc = (type, p) => {
       try {
@@ -17380,14 +17238,14 @@ const JRNL = {
 
     tb.innerHTML = filtered.map(e=>{
       let p={}; try{ p=JSON.parse(e.payload||'{}'); }catch(_){}
-      const user=_usersMap.get(e.user_id);
+      const user=DB.all('USERS').find(u=>u.id===e.user_id);
       const badge = EVENT_BADGE[e.type]||'bgo';
       const label = e.type==='SALE' ? DASH._saleLabel(p,false) : (EVENT_LABEL[e.type]||e.type); // §v1.1.209
       const arDesc = _arDesc(e.type, p);
       let detail='', value='', ref='';
 
       if(e.type==='SALE'){
-        const inv=_invoicesByNum.get(p.num);
+        const inv=DB.all('INVOICES').find(i=>i.num===p.num);
         const invItems=inv?JSON.parse(inv.items||'[]'):[];
         const itemSummary=invItems.slice(0,2).map(it=>`${escapeHtml(it.name)} ×${it.qty}`).join(' | ')+(invItems.length>2?` + ${invItems.length-2} أخرى`:'');
         detail=`<strong>${arDesc}</strong><br><span style="font-size:10px;color:var(--muted)">${p.customer||'عميل عام'} | ${itemSummary||'—'} | ${p.payType==='credit'?'آجل':p.payType==='partial'?'جزئي':'نقدي'}</span>`;
@@ -17714,11 +17572,9 @@ const REFRESH_CTRL = {
     if(this._hardRunning){ TOAST.warn('⏳ التحديث القوي جارٍ بالفعل...'); return; }
     this._hardRunning = true;
     if(typeof FINANCIAL_ENGINE !== 'undefined') FINANCIAL_ENGINE._bgAuditLocked = true; // §v1.1.242 FIX#10
-    // Lock UI — §v1.1.338b: use WeakMap to preserve each button's original disabled state
-    // (replaces non-standard _wasDisabled property; behaviour identical to original intent)
+    // Lock UI
     const btns = document.querySelectorAll('button');
-    const _btnWasDisabled = new WeakMap();
-    btns.forEach(b=>{ _btnWasDisabled.set(b, b.disabled); b.disabled=true; });
+    btns.forEach(b=>{ b._wasDisabled=b.disabled; b.disabled=true; });
 
     try{
       // §FIX-PHANTOM-LEDGER v10.9:
@@ -17753,7 +17609,7 @@ const REFRESH_CTRL = {
 
       // Verify invariants
       let invResult = {ok:true,failures:[]};
-      try{ invResult = FINANCIAL_ENGINE.validateFinancialInvariants(); }catch(e){ console.error('[REFRESH] validateFinancialInvariants failed', e); invResult = { ok: false, failures: [], errors: [e.message] }; } // §v1.1.339: added missing failures:[] to catch fallback (TS2741)
+      try{ invResult = FINANCIAL_ENGINE.validateFinancialInvariants(); }catch(e){ console.error('[REFRESH] validateFinancialInvariants failed', e); invResult = { ok: false, errors: [e.message] }; }
 
       // Verify hash chain
       let hashResult = {ok:true,status:'VALID',events:0};
@@ -17800,7 +17656,7 @@ const REFRESH_CTRL = {
     }catch(e){
       try{ SYS_ALERT.show('critical','فشل التحديث القوي: '+e.message,{restore:true}); }catch(_){}
     }finally{
-      btns.forEach(b=>{ b.disabled=_btnWasDisabled.get(b)??false; }); // §v1.1.338b: restore original state via WeakMap
+      btns.forEach(b=>{ b.disabled=b._wasDisabled||false; });
       this._hardRunning=false;
       if(typeof FINANCIAL_ENGINE !== 'undefined') FINANCIAL_ENGINE._bgAuditLocked = false; // §v1.1.242 FIX#10: release lock
     }
@@ -18648,8 +18504,7 @@ const RPTS = {
     // §v1.1.302: Stock Insights CSV
     if(activeDiv==='rplStockInsights'){
       this.exportStockInsightsCSV(); return;
-    }
-    if(activeDiv==='rplSales'){
+    } else if(activeDiv==='rplSales'){
       // Sales by category
       const invs=CALC.getSales().filter(i=>(!df||i.date>=df)&&(!dt||i.date<=dt));
       if(!invs.length){ TOAST.err('لا توجد مبيعات في الفترة'); return; }
@@ -18828,10 +18683,6 @@ const RPTS = {
   // §v1.1.299: STOCK INSIGHTS — Category analysis + demand/supply chart
   // ══════════════════════════════════════════════════════════════════
   _siRows:    [],   // cached category rows (cost/retail/profit)
-  _siVsRows:  [],   // §v1.1.342: working sorted slice for virtual scroll
-  _siVsCount: 0,    // §v1.1.342: categories rendered so far
-  _siVsBatch: 40,   // §v1.1.342: categories per batch
-  _siVsObs:   null, // §v1.1.342: active IntersectionObserver
   _siDemand:  {},   // catKey → qty sold in selected period
   _siDays:    7,    // active preset (days); 0 = custom range
 
@@ -18852,7 +18703,6 @@ const RPTS = {
 
   /** Force full recalculation from DB — called by manual refresh button. */
   refreshStockInsights(){
-    this._siVsDisconnect(); // §v1.1.342: disconnect observer before clearing cache
     this._siRows = []; // clear cache to force _siCalcAll()
     this._siCalcAll();
     TOAST.ok('✓ تم تحديث بيانات كشف المخزن'); // §v1.1.319
@@ -19010,118 +18860,91 @@ const RPTS = {
     }
   },
 
-  // ── §v1.1.342: Virtual scroll helpers for Stock Insights ──────────────
-  _siVsDisconnect(){
-    if(this._siVsObs){ this._siVsObs.disconnect(); this._siVsObs = null; }
-  },
-
-  _siVsAttach(){
-    this._siVsDisconnect();
-    const sentinel = document.getElementById('siVsSentinel');
-    if(!sentinel || this._siVsCount >= this._siVsRows.length) return;
-    this._siVsObs = new IntersectionObserver(entries => {
-      if(entries[0].isIntersecting) this._siVsAppend();
-    }, { rootMargin: '200px', threshold: 0 });
-    this._siVsObs.observe(sentinel);
-  },
-
-  _siVsAppend(){
-    const tb = document.getElementById('rplSIBody');
-    if(!tb) return;
-    const cur = getCurr();
-    const next = this._siVsRows.slice(this._siVsCount, this._siVsCount + this._siVsBatch);
-    if(!next.length){ this._siVsDisconnect(); return; }
-    tb.insertAdjacentHTML('beforeend', next.map((r, i) => this._siVsBuildRows(r, this._siVsCount + i, cur)).join(''));
-    this._siVsCount += next.length;
-    this._siVsUpdateInfo();
-    if(this._siVsCount >= this._siVsRows.length) this._siVsDisconnect();
-    else this._siVsAttach();
-  },
-
-  _siVsUpdateInfo(){
-    const el = document.getElementById('siVsInfo');
-    if(!el) return;
-    const total = this._siVsRows.length;
-    if(total === 0 || this._siVsCount >= total){ el.style.display = 'none'; return; }
-    el.style.display = 'block';
-    el.textContent   = `عرض ${this._siVsCount} من ${total} فئة — مرر للأسفل لتحميل المزيد`;
-  },
-
-  /** Build the two <tr> rows for one category (data row + chart row). */
-  _siVsBuildRows(r, i, cur){
-    const profitColor = r.profit >= 0 ? 'var(--green)' : 'var(--red)';
-    const marginColor = r.margin >= 20 ? 'var(--green)'
-                      : r.margin >= 10 ? 'var(--gold)'
-                      : r.margin >  0  ? '#fb923c'
-                      :                   'var(--red)';
-    const rowBg = i % 2 === 0 ? '' : 'background:rgba(255,255,255,.02)';
-    const demand = Math.max(0, r.demand || 0);
-    const supply = Math.max(0, r.supply || 0);
-    const total  = demand + supply;
-    const demPct = total > 0 ? Math.round((demand / total) * 100) : 0;
-    const supPct = 100 - demPct;
-    const demColor = demPct >= 70 ? '#ef4444' : demPct >= 40 ? '#10b981' : '#3b82f6';
-    const supColor = '#334155';
-    const ratioLabel = supply > 0 ? `${((demand / supply) * 100).toFixed(0)}%` : (demand > 0 ? '∞' : '—');
-    const chartHtml = `
-      <div style="display:flex;flex-direction:column;gap:5px;padding:8px 14px 12px;
-                  background:rgba(0,0,0,.15);border-top:1px solid var(--bdr2)">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:10px;color:var(--muted);white-space:nowrap;min-width:36px">طلب</span>
-          <div style="flex:1;height:13px;background:var(--card);border-radius:20px;overflow:hidden;max-width:300px;position:relative">
-            <div style="width:${demPct}%;height:100%;background:${demColor};border-radius:20px;
-                        transition:width .4s ease;min-width:${demPct>0?'4px':'0'}"></div>
-          </div>
-          <span style="font-size:10.5px;font-weight:700;color:${demColor};min-width:36px;direction:ltr">${demPct}%</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:10px;color:var(--muted);white-space:nowrap;min-width:36px">مخزون</span>
-          <div style="flex:1;height:13px;background:var(--card);border-radius:20px;overflow:hidden;max-width:300px;position:relative">
-            <div style="width:${supPct}%;height:100%;background:${supColor};border-radius:20px;
-                        transition:width .4s ease;min-width:${supPct>0?'4px':'0'}"></div>
-          </div>
-          <span style="font-size:10.5px;font-weight:700;color:var(--txt2);min-width:36px;direction:ltr">${supPct}%</span>
-        </div>
-        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:2px">
-          <span style="font-size:11px;color:var(--muted)">الطلب: <strong style="color:${demColor}">${Math.round(demand)} قطعة</strong></span>
-          <span style="font-size:11px;color:var(--muted)">المخزون: <strong style="color:var(--txt2)">${Math.round(supply)} قطعة</strong></span>
-          <span style="font-size:11px;color:var(--muted)">نسبة الطلب/المخزون: <strong style="color:${demColor}">${ratioLabel}</strong></span>
-        </div>
-      </div>`;
-    return `<tr style="${rowBg}">
-      <td style="color:var(--gold);font-weight:700">${escapeHtml(r.cat)}</td>
-      <td style="text-align:left;font-family:monospace">${r.totalCost.toFixed(2)} ${cur}</td>
-      <td style="text-align:left;font-family:monospace">${r.totalRetail.toFixed(2)} ${cur}</td>
-      <td style="text-align:left;font-family:monospace;color:${profitColor};font-weight:700">${r.profit.toFixed(2)} ${cur}</td>
-      <td style="text-align:center;font-weight:700;color:${marginColor}">${r.margin.toFixed(1)}%</td>
-    </tr>
-    <tr style="${rowBg}"><td colspan="5" style="padding:0">${chartHtml}</td></tr>`;
-  },
-
-  /** Render table body from cached _siRows using virtual scroll (§v1.1.342). */
+  /** Render table body from cached _siRows (called after sort or after _siCalcAll). */
   _renderSITable(s){
     const cur = s || getCurr();
     const tb  = document.getElementById('rplSIBody');
     if(!tb) return;
-    // Reset VS state
-    this._siVsDisconnect();
-    this._siVsRows  = this._siRows.slice(); // snapshot of current sorted order
-    this._siVsCount = 0;
-    if(!this._siVsRows.length){
+    if(!this._siRows || !this._siRows.length){
       tb.innerHTML = `<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:24px">
         <i class="fa-solid fa-box-open" style="margin-left:6px;opacity:.5"></i>لا توجد منتجات</td></tr>`;
-      const infoEl = document.getElementById('siVsInfo'); if(infoEl) infoEl.style.display = 'none';
       return;
     }
-    // Render first batch
-    const firstBatch = this._siVsRows.slice(0, this._siVsBatch);
-    tb.innerHTML = firstBatch.map((r, i) => this._siVsBuildRows(r, i, cur)).join('');
-    this._siVsCount = firstBatch.length;
-    this._siVsUpdateInfo();
-    this._siVsAttach();
+    tb.innerHTML = this._siRows.map((r, i) => {
+      // ── inventory row ──────────────────────────────────────────
+      const profitColor = r.profit >= 0 ? 'var(--green)' : 'var(--red)';
+      const marginColor = r.margin >= 20 ? 'var(--green)'
+                        : r.margin >= 10 ? 'var(--gold)'
+                        : r.margin >  0  ? '#fb923c'
+                        :                   'var(--red)';
+      const rowBg = i % 2 === 0 ? '' : 'background:rgba(255,255,255,.02)';
+
+      // ── demand / supply bar ────────────────────────────────────
+      const demand = Math.max(0, r.demand || 0);
+      const supply = Math.max(0, r.supply || 0);
+      const total  = demand + supply;
+      const demPct = total > 0 ? Math.round((demand / total) * 100) : 0;
+      const supPct = 100 - demPct;
+
+      // Bar color logic: heavy demand (>70%) → red alert; balanced → green/blue
+      const demColor = demPct >= 70 ? '#ef4444'   // stock running low
+                     : demPct >= 40 ? '#10b981'   // healthy turnover
+                     :                '#3b82f6';  // low demand
+      const supColor = '#334155';                 // always slate
+
+      // Demand/supply ratio text
+      const ratioLabel = supply > 0
+        ? `${((demand / supply) * 100).toFixed(0)}%`
+        : (demand > 0 ? '∞' : '—');
+
+      const chartHtml = `
+        <div style="display:flex;flex-direction:column;gap:5px;padding:8px 14px 12px;
+                    background:rgba(0,0,0,.15);border-top:1px solid var(--bdr2)">
+          <!-- bar track -->
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:10px;color:var(--muted);white-space:nowrap;min-width:36px">طلب</span>
+            <div style="flex:1;height:13px;background:var(--card);border-radius:20px;overflow:hidden;max-width:300px;position:relative">
+              <div style="width:${demPct}%;height:100%;background:${demColor};border-radius:20px;
+                          transition:width .4s ease;min-width:${demPct>0?'4px':'0'}"></div>
+            </div>
+            <span style="font-size:10.5px;font-weight:700;color:${demColor};min-width:36px;direction:ltr">${demPct}%</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:10px;color:var(--muted);white-space:nowrap;min-width:36px">مخزون</span>
+            <div style="flex:1;height:13px;background:var(--card);border-radius:20px;overflow:hidden;max-width:300px;position:relative">
+              <div style="width:${supPct}%;height:100%;background:${supColor};border-radius:20px;
+                          transition:width .4s ease;min-width:${supPct>0?'4px':'0'}"></div>
+            </div>
+            <span style="font-size:10.5px;font-weight:700;color:var(--txt2);min-width:36px;direction:ltr">${supPct}%</span>
+          </div>
+          <!-- stats row -->
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:2px">
+            <span style="font-size:11px;color:var(--muted)">
+              الطلب: <strong style="color:${demColor}">${Math.round(demand)} قطعة</strong>
+            </span>
+            <span style="font-size:11px;color:var(--muted)">
+              المخزون: <strong style="color:var(--txt2)">${Math.round(supply)} قطعة</strong>
+            </span>
+            <span style="font-size:11px;color:var(--muted)">
+              نسبة الطلب/المخزون: <strong style="color:${demColor}">${ratioLabel}</strong>
+            </span>
+          </div>
+        </div>`;
+
+      return `<tr style="${rowBg}">
+        <td style="color:var(--gold);font-weight:700">${escapeHtml(r.cat)}</td>
+        <td style="text-align:left;font-family:monospace">${r.totalCost.toFixed(2)} ${cur}</td>
+        <td style="text-align:left;font-family:monospace">${r.totalRetail.toFixed(2)} ${cur}</td>
+        <td style="text-align:left;font-family:monospace;color:${profitColor};font-weight:700">${r.profit.toFixed(2)} ${cur}</td>
+        <td style="text-align:center;font-weight:700;color:${marginColor}">${r.margin.toFixed(1)}%</td>
+      </tr>
+      <tr style="${rowBg}">
+        <td colspan="5" style="padding:0">${chartHtml}</td>
+      </tr>`;
+    }).join('');
   },
 
-  /** Sort _siRows and re-render table with VS reset (no recalc). §v1.1.342 */
+  /** Sort _siRows and re-render table (no recalc). */
   sortStockInsights(dir){
     if(!this._siRows || !this._siRows.length) return;
     this._siActiveSort = dir; // §v1.1.319: remember chosen sort across refresh/filter
@@ -20332,7 +20155,7 @@ const RPTS = {
         })()}
       `;
     }catch(cfErr){
-      contentEl.innerHTML = `<div style="color:var(--red);padding:20px">خطأ في حساب التدفق النقدي: ${escapeHtml(cfErr.message||'')}</div>`; // §v1.1.328: XSS-safe
+      contentEl.innerHTML = `<div style="color:var(--red);padding:20px">خطأ في حساب التدفق النقدي: ${cfErr.message}</div>`;
       console.warn('[RPTS.renderCashFlow]', cfErr);
     }
   },
@@ -22217,8 +22040,8 @@ const SUPPLIER_PAY = {
       createdAt: new Date().toISOString()
     };
     
-    // Save to DB — §v1.1.341: DB.insert() returns the full row object; extract .id for use as reference string
-    const payId = DB.insert('SUPPLIER_PAYMENTS', payment)?.id;
+    // Save to DB
+    const payId = DB.insert('SUPPLIER_PAYMENTS', payment);
 
     // If linked to an invoice, update its remainingBalance
     if(payment.invoiceId) {
@@ -22243,7 +22066,7 @@ const SUPPLIER_PAY = {
     if(amount > supBalance && supBalance >= 0) {
       const creditCents = _toCents(amount - supBalance);
       const credit = {
-        // §v1.1.340: removed id:_id() — DB.insert() auto-generates id via its internal _id() (TS2304)
+        id: _id(),
         supplierId,
         amount_c: creditCents,
         date: new Date().toISOString(),
@@ -22784,32 +22607,6 @@ const BKP_PAGE = {
     const bkps=DB.all('BACKUPS').sort((a,b)=>(b.created_at||'').localeCompare(a.created_at||''));
     const prods=DB.count('PRODUCTS'), invs=DB.count('INVOICES'), exps=DB.count('EXPENSES'), evts=EVENTS.count();
     const connected = DRIVE_SYNC.isConnected();
-    // §v1.1.330: Storage gauge — localStorage usage meter
-    const gaugeEl = document.getElementById('storageGauge');
-    if (gaugeEl) {
-      const _su = _storageUsage();
-      const usedMB = (_su.used / (1024*1024)).toFixed(2);
-      const limitMB = (_su.limit / (1024*1024)).toFixed(0);
-      const barColor = _su.pct >= 95 ? 'var(--red,#e53e3e)' : _su.pct >= 80 ? 'var(--gold,#d69e2e)' : 'var(--green,#38a169)';
-      const statusTxt = _su.pct >= 95 ? '🔴 خطر — مساحة ممتلئة تقريباً' : _su.pct >= 80 ? '🟡 تحذير — مساحة تقترب من الامتلاء' : '🟢 مساحة كافية';
-      const tipHtml = _su.pct >= 80
-        ? `<div style="margin-top:10px;font-size:12px;color:var(--txt,#e2e8f0);background:rgba(214,158,46,.1);border:1px solid rgba(214,158,46,.25);border-radius:8px;padding:8px 10px">💡 يُنصح بتفعيل <strong>الملف المحمول</strong> من صفحة <a href="javascript:void(0)" onclick="goTo('settings')" style="color:var(--blue,#3b82f6);text-decoration:underline">الإعدادات</a> لحماية بياناتك.</div>`
-        : '';
-      gaugeEl.innerHTML = `<div class="card" style="padding:14px 16px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <span style="font-size:13px;font-weight:700;color:var(--txt)"><i class="fa-solid fa-hard-drive" style="margin-left:6px;color:${barColor}"></i>مساحة التخزين المحلي (localStorage)</span>
-          <span style="font-size:12px;color:var(--muted)">${usedMB} MB / ${limitMB} MB</span>
-        </div>
-        <div style="background:var(--card2,#2d3748);border-radius:6px;height:10px;overflow:hidden">
-          <div style="height:100%;width:${_su.pct}%;background:${barColor};border-radius:6px;transition:width .3s"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--muted)">
-          <span>${statusTxt}</span>
-          <span>${_su.pct}% مستخدم</span>
-        </div>
-        ${tipHtml}
-      </div>`;
-    }
     const kpiEl=document.getElementById('bkpKPIs');
     if(kpiEl) kpiEl.innerHTML=`<div class="kpi kgr"><div class="ki"><i class="fa-solid fa-circle-check"></i></div><div class="kv2">${bkps.filter(b=>b.status==='ناجح').length}</div><div class="klbl">نسخ ناجحة</div></div><div class="kpi kb"><div class="ki"><i class="fa-solid fa-database"></i></div><div class="kv2">${prods+invs+exps}</div><div class="klbl">إجمالي السجلات</div></div><div class="kpi kg"><div class="ki"><i class="fa-solid fa-list-check"></i></div><div class="kv2">${evts}</div><div class="klbl">إجمالي الأحداث</div></div><div class="kpi ${connected?'kg':'kv'}"><div class="ki"><i class="fa-brands fa-google-drive"></i></div><div class="kv2" style="font-size:12px">${connected?'✓ متصل':'غير متصل'}</div><div class="klbl">Google Drive</div></div>`;
     DRIVE_SYNC.updateUI();
@@ -22836,13 +22633,13 @@ const BKP_PAGE = {
     }
     // §v1.1.269: Dev-only sync monitor — show last 5 cloud syncs with gap analysis
     (function _renderDevSyncMonitor() {
-      const devPanel = document.getElementById('devSyncMonitor');
-      const devList  = document.getElementById('devLast5Syncs');
+      var devPanel = document.getElementById('devSyncMonitor');
+      var devList  = document.getElementById('devLast5Syncs');
       if (!devPanel || !devList) return;
-      const fbU = window._fbCurrentUser;
+      var fbU = window._fbCurrentUser;
       if (!fbU || fbU.email !== 'hamzaeldibo@gmail.com') { devPanel.style.display = 'none'; return; }
       devPanel.style.display = '';
-      const last5 = DB.all('SYNC_LOG')
+      var last5 = DB.all('SYNC_LOG')
         .filter(function(r) { return r.dest === 'Firestore'; })
         .sort(function(a, b) { return (b.created_at || '').localeCompare(a.created_at || ''); })
         .slice(0, 5);
@@ -22851,16 +22648,16 @@ const BKP_PAGE = {
         return;
       }
       devList.innerHTML = last5.map(function(r, idx) {
-        const prev = last5[idx + 1];
-        let gapHtml = '';
+        var prev = last5[idx + 1];
+        var gapHtml = '';
         if (prev && r.created_at && prev.created_at) {
-          const gapMs  = new Date(r.created_at) - new Date(prev.created_at);
-          const gapSec = Math.round(Math.abs(gapMs) / 1000);
-          const warn   = gapSec < 35;
+          var gapMs  = new Date(r.created_at) - new Date(prev.created_at);
+          var gapSec = Math.round(Math.abs(gapMs) / 1000);
+          var warn   = gapSec < 35;
           gapHtml = '<span style="font-size:10px;margin-right:8px;color:' + (warn ? 'var(--red)' : 'var(--green)') + '">' +
             (warn ? '\u26A0\uFE0F \u0641\u062C\u0648\u0629: ' : '\u2713 \u0641\u062C\u0648\u0629: ') + gapSec + '\u062B' + (warn ? ' \u2014 \u0645\u0634\u0628\u0648\u0647!' : '') + '</span>';
         }
-        const statusColor = r.status === '\u0646\u0627\u062C\u062D' ? 'var(--green)' : 'var(--red)';
+        var statusColor = r.status === '\u0646\u0627\u062C\u062D' ? 'var(--green)' : 'var(--red)';
         return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card2);border-radius:8px;font-size:11.5px">' +
           '<span style="font-size:10px;color:var(--muted);min-width:16px">#' + (idx + 1) + '</span>' +
           '<span style="color:var(--txt)">' + (fmtLocalDateTime(r.created_at) || '\u2014') + '</span>' +
@@ -22924,12 +22721,11 @@ const BKP_PAGE = {
         const retCnt  = data.tables.RETURNS?.length||0;
         const custCnt = data.tables.CUSTOMERS?.length||0;
         const expAt   = data.exported_at ? fmtLocalDateTime(data.exported_at) : '—';
-        const by      = escapeHtml(data.exported_by || '—'); // §v1.1.328: XSS-safe
-        const device  = escapeHtml(data.device || '—');       // §v1.1.328: XSS-safe
-        const ver     = escapeHtml(String(data.version||'?')); // §v1.1.328: XSS-safe
+        const by      = data.exported_by || '—';
+        const device  = data.device || '—';
         if(infoEl){
           infoEl.style.display='';
-          infoEl.innerHTML=`<div style="font-weight:700;color:var(--green);margin-bottom:5px"><i class="fa-solid fa-circle-check"></i> الملف صالح — الإصدار ${ver}</div>`
+          infoEl.innerHTML=`<div style="font-weight:700;color:var(--green);margin-bottom:5px"><i class="fa-solid fa-circle-check"></i> الملف صالح — الإصدار ${data.version||'?'}</div>`
             +`<div>📅 تاريخ الإصدار: <strong>${expAt}</strong> | بواسطة: ${by} | جهاز: ${device}</div>`
             +`<div style="margin-top:5px;display:flex;gap:14px;flex-wrap:wrap">`
             +`<span>📋 فواتير: <strong>${invCnt}</strong></span>`
@@ -22940,7 +22736,7 @@ const BKP_PAGE = {
             +`</div>`;
         }
       } catch(err){
-        if(errEl){ errEl.style.display=''; errEl.innerHTML='<i class="fa-solid fa-triangle-exclamation"></i> الملف تالف أو غير صالح: ' + escapeHtml(err.message||''); }
+        if(errEl){ errEl.style.display=''; errEl.innerHTML='<i class="fa-solid fa-triangle-exclamation"></i> الملف تالف أو غير صالح: ' + err.message; }
       }
     };
     reader.readAsText(file);
@@ -25142,7 +24938,7 @@ const CUST_PAGE = {
     const rets    = allReturns.filter(r=>r.customer===cx.name);
     const credits = allCredits.filter(cc=>cc.customerName===cx.name||cc.customerId===cx.id);
     const totalP   = _fromCents(invs.reduce((a,i)=>a+(typeof i.total_c==='number'?i.total_c:_toCents(i.total||0)),0));
-    const debtBal  = CALC.getOutstandingDebt(invs).total; // §v1.1.338: removed extra _evts arg — getOutstandingDebt() fetches events internally
+    const debtBal  = CALC.getOutstandingDebt(invs, _evts).total;
     const creditBal= _fromCents(credits.reduce((a,cc)=>a+(cc.type==='credit_added'?_toCents(cc.amt||0):cc.type==='credit_used'?-_toCents(cc.amt||0):0),0));
     const retTotal = _fromCents(rets.reduce((a,r)=>a+_toCents(r.amt||0),0));
     const lastInv  = invs.sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0];
@@ -25829,67 +25625,45 @@ const CHARTS_PAGE = {
   },
 
   // §v1.1.252-FIX#52: Export Charts data as printable PDF
-  // §v1.1.326: exportChartsPDF — captures each canvas as image via toDataURL()
   exportChartsPDF(){
     const {days, fromDate, toDate} = this._getRange();
     const s = getCurr();
     const cfg = getCfg();
     const storeName = cfg.pdfStoreName || cfg.storeName || 'SmartStorePOS';
-    const salesData  = this._salesByDay(days);
-    const expData    = this._expByDay(days);
+    const salesData = this._salesByDay(days);
+    const expData   = this._expByDay(days);
+    const catData   = this._salesByCategory(fromDate, toDate);
     const totalSales = salesData.reduce((a,v)=>a+v,0);
     const totalExp   = expData.reduce((a,v)=>a+v,0);
-    const netProfit  = Math.round((totalSales - totalExp) * 100) / 100;
-    const periodLabel = fromDate && toDate
-      ? `${fromDate} → ${toDate}`
-      : (days.length ? `${days[0]} → ${days[days.length-1]}` : 'كامل الفترة');
-
-    // ── Capture each canvas as base64 PNG ──────────────────────────────────
-    const chartDefs = [
-      { id:'chartSalesTrend',     label:'اتجاه المبيعات اليومية' },
-      { id:'chartCategory',       label:'المبيعات حسب الفئة' },
-      { id:'chartTopProducts',    label:'أكثر المنتجات مبيعاً' },
-      { id:'chartRevVsExp',       label:'الإيرادات مقابل المصاريف' },
-      { id:'chartDebt',           label:'الديون والتحصيلات' },
-      { id:'chartDebtByCustomer', label:'الديون حسب الزبون' },
-      { id:'chartExpByCategory',  label:'المصاريف حسب الفئة' },
-      { id:'chartMonthlyProfit',  label:'الربح اليومي' },
-      { id:'chartProfitMargin',   label:'هامش الربح حسب الفئة' },
-      { id:'chartSupPurchases',   label:'مشتريات الموردين مقابل المدفوعات' },
-      { id:'chartTopSuppliers',   label:'أكثر الموردين مشترياً' },
-    ];
-
-    const chartImgs = chartDefs.map(({id, label}) => {
-      const canvas = document.getElementById(id);
-      if(!canvas || !canvas.width || !canvas.height) return '';
-      try {
-        const img = canvas.toDataURL('image/png', 1.0);
-        return `<div class="chart-block"><div class="chart-title">${label}</div><img src="${img}" style="width:100%;max-width:700px;border-radius:6px;border:1px solid #e2e8f0"></div>`;
-      } catch(_) { return ''; }
-    }).filter(Boolean).join('');
-
-    const netColor = netProfit >= 0 ? '#16a34a' : '#dc2626';
+    const netProfit  = Math.round((totalSales - totalExp) * 100) / 100; // §v1.1.305: prevent float drift
+    const periodLabel = fromDate && toDate ? `${fromDate} → ${toDate}` : (days.length ? `${days[0]} → ${days[days.length-1]}` : 'كامل الفترة');
+    const rows = days.map((d,i)=>{
+      const net=Math.round(((salesData[i]||0)-(expData[i]||0))*100)/100; // §v1.1.305: prevent float drift
+      return `<tr><td>${d}</td><td class="num">${(salesData[i]||0).toFixed(2)}</td><td class="num">${(expData[i]||0).toFixed(2)}</td><td class="num" style="color:${net>=0?'#16a34a':'#dc2626'}">${net.toFixed(2)}</td></tr>`;
+    }).join('');
+    const catRows = Object.entries(catData).sort((a,b)=>b[1]-a[1]).map(([cat,val])=>
+      `<tr><td>${escapeHtml(cat)}</td><td class="num">${val.toFixed(2)} ${s}</td></tr>`).join('');
     const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
 <title>تقرير الرسوم البيانية</title>
-<style>
-body{font-family:'Segoe UI',Arial,sans-serif;direction:rtl;font-size:12px;color:#1e293b;margin:24px;background:#fff}
-h1{font-size:17px;font-weight:700;margin-bottom:4px}
-.sub{font-size:10px;color:#64748b;margin-bottom:18px}
-.kpis{display:flex;gap:12px;margin-bottom:22px;flex-wrap:wrap}
-.kpi{padding:10px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;min-width:120px}
-.kv{font-size:16px;font-weight:700}.kl{font-size:9px;color:#64748b;margin-top:2px}
-.chart-block{margin-bottom:28px;page-break-inside:avoid}
-.chart-title{font-size:12px;font-weight:700;color:#334155;margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid #e2e8f0}
-@media print{body{margin:10px}.chart-block{page-break-inside:avoid}}
-</style></head><body>
+<style>body{font-family:'Segoe UI',Arial,sans-serif;direction:rtl;font-size:11px;color:#1e293b;margin:20px}
+h1{font-size:16px;margin-bottom:4px} .sub{font-size:10px;color:#64748b;margin-bottom:16px}
+table{width:100%;border-collapse:collapse;margin-bottom:20px}
+th{background:#1e293b;color:#fff;padding:5px 8px;text-align:right}
+td{padding:4px 8px;border-bottom:1px solid #e5e7eb;text-align:right}
+.num{text-align:left;font-family:monospace}
+.kpi{display:inline-block;margin:0 8px 12px 0;padding:8px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px}
+.kv{font-size:15px;font-weight:700} .kl{font-size:9px;color:#64748b}
+@media print{body{margin:10px}}</style></head><body>
 <h1>🏪 ${escapeHtml(storeName)} — تقرير الرسوم البيانية</h1>
 <div class="sub">الفترة: ${periodLabel} | تاريخ التصدير: ${todayISO()}</div>
-<div class="kpis">
+<div>
   <div class="kpi"><div class="kv">${totalSales.toFixed(2)} ${s}</div><div class="kl">إجمالي المبيعات</div></div>
   <div class="kpi"><div class="kv">${totalExp.toFixed(2)} ${s}</div><div class="kl">إجمالي المصاريف</div></div>
-  <div class="kpi"><div class="kv" style="color:${netColor}">${netProfit.toFixed(2)} ${s}</div><div class="kl">صافي الربح</div></div>
+  <div class="kpi" style="color:${netProfit>=0?'#16a34a':'#dc2626'}"><div class="kv">${netProfit.toFixed(2)} ${s}</div><div class="kl">صافي الربح</div></div>
 </div>
-${chartImgs || '<p style="color:#94a3b8;text-align:center;padding:30px">لا توجد رسوم بيانية — يرجى فتح صفحة الرسوم أولاً</p>'}
+<table><thead><tr><th>اليوم</th><th class="num">المبيعات (${s})</th><th class="num">المصاريف (${s})</th><th class="num">صافي الربح (${s})</th></tr></thead><tbody>${rows}</tbody></table>
+<h2 style="font-size:13px">المبيعات حسب الفئة</h2>
+<table><thead><tr><th>الفئة</th><th class="num">القيمة (${s})</th></tr></thead><tbody>${catRows}</tbody></table>
 </body></html>`;
     _openPrintWindow(html, 'charts');
   },
@@ -26646,7 +26420,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
           console.warn('[License] Firestore check failed (possibly offline):', err.message);
           // §v1.1.80: Hardened offline grace period — 24h, tamper-resistant
           const GRACE_MS = MS_PER_DAY; // 24 hours (reduced from 72h)
-          const lastVerified = window._licReadTimestamp();
+          var lastVerified = window._licReadTimestamp();
           const elapsed = Date.now() - lastVerified;
           if (lastVerified > 0 && elapsed < GRACE_MS) {
             const hoursLeft = Math.ceil((GRACE_MS - elapsed) / 3600000);
@@ -26694,7 +26468,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
   // Show cancellation modal (user stays logged in until they click logout)
   window._showCancellationModal = function() {
-    let modal = document.getElementById('cancellationModal');
+    var modal = document.getElementById('cancellationModal');
     if (!modal) {
       modal = document.createElement('div');
       modal.id = 'cancellationModal';
