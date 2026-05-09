@@ -561,7 +561,14 @@ function loginScreenRestore(){
     document.head.appendChild(s);
   }
 
-  // §v1.1.346: ?dev=1 no longer loads Eruda before login — deferred to auth check below
+  // §v1.1.347 – Critical fix: race condition between Firebase Auth و DB.initIDB():
+//   • DB._get() يرجع إلى localStorage إذا كان _mem فارغاً أثناء السباق
+//   • _idbReadyPromise: promise عالمي يُشير لاكتمال IDB
+//   • _doLaunchApp async: تنتظر IDB قبل رندر أي صفحة
+//   • verboselogging في initIDB يُظهر عدد الجداول المحمّلة
+//   • debugStorage() متاح عبر window._debugStorage() في الكونسول
+//   • Watchdog بعد 3 ثوانٍ: يُظهر بانر تحذير + إعادة تحميل تلقائية
+// §v1.1.346: ?dev=1 no longer loads Eruda before login — deferred to auth check below
   // (prevents unauthenticated users from accessing dev tools)
   if(urlDev){ /* deferred — handled in auth poll below */ }
 
@@ -705,7 +712,7 @@ function loginScreenRestore(){
 <nav id="sidebar">
   <div class="sblogo">
     <div class="sbli">🏪</div>
-    <div class="sblt"><h2 id="sbStore">SmartStorePOS</h2><span id="sidebarVersionBadge">Gold v1.1.346</span></div>
+    <div class="sblt"><h2 id="sbStore">SmartStorePOS</h2><span id="sidebarVersionBadge">Gold v1.1.347</span></div>
   </div>
   <div class="sbnav">
     <div class="sbsec">الرئيسية</div>
@@ -3885,7 +3892,23 @@ const DB = (function(){
   // §v1.1.344: In-memory cache — all synchronous reads served from here
   const _mem = {};
   // §v1.1.344: _get reads from _mem (zero latency, always synchronous)
-  function _get(t){ return _mem[t] || []; }
+  // §v1.1.347: fallback to localStorage if _mem[t] empty (race condition guard)
+  function _get(t){
+    if(_mem[t] && _mem[t].length > 0) return _mem[t];
+    // IDB may not be ready yet — try localStorage as live fallback
+    try{
+      const raw = localStorage.getItem(NS + t);
+      if(raw){
+        const d = JSON.parse(raw);
+        if(Array.isArray(d) && d.length > 0){
+          _mem[t] = d; // seed mem for next reads
+          console.warn('[DB._get] Race fallback: loaded', t, 'from localStorage (', d.length, 'rows)');
+          return d;
+        }
+      }
+    }catch(_){}
+    return _mem[t] || [];
+  }
   // §v1.1.345: _set — writes _mem (sync) + IDB (async). localStorage writes removed.
   function _set(t,d){
     _mem[t] = d; // synchronous — rest of app unaffected
@@ -3982,6 +4005,27 @@ const DB = (function(){
       });
       _set(table, [...existing, ...toInsert]);
     },
+  // ── §v1.1.347: _debugStorage — logs _mem + IDB state to console ──
+  async debugStorage(){
+    console.group('[SmartStorePOS] Storage Debug v1.1.347');
+    console.info('IDB Ready:', window._idbReady);
+    const memSummary = {};
+    IDB_ENGINE.ALL_TABLES.forEach(t => { memSummary[t] = (_mem[t]||[]).length; });
+    console.table(memSummary);
+    const info = await DB.getStorageInfo().catch(()=>({supported:false}));
+    console.info('Storage quota:', info.supported
+      ? `${(info.usage/1024/1024).toFixed(1)}MB / ${(info.quota/1024/1024).toFixed(0)}MB (${info.percentUsed}%)`
+      : 'Not supported');
+    // Check localStorage
+    const NS2='spos_v4_'; let lsRows=0;
+    IDB_ENGINE.ALL_TABLES.forEach(t=>{
+      const r=localStorage.getItem(NS2+t);
+      if(r){ try{ lsRows+=JSON.parse(r).length; }catch(_){} }
+    });
+    console.info('localStorage rows (legacy):', lsRows);
+    console.groupEnd();
+    return memSummary;
+  },
   // ── §v1.1.345: purgeLegacyLocalStorage — call once after stable boot ─
   purgeLegacyLocalStorage(){
     // §v1.1.346 SAFETY: never purge if IDB has no data (prevents data loss on IDB failure)
@@ -4052,7 +4096,9 @@ const DB = (function(){
           console.info('[DB.initIDB] Fresh install — no existing data ✓');
         }
       } else {
-        console.info('[DB.initIDB] Ready — all tables loaded from IDB ✓');
+        const rowCounts = IDB_ENGINE.ALL_TABLES.map(t=>({t, n:(_mem[t]||[]).length})).filter(x=>x.n>0);
+      console.info('[DB.initIDB] Ready ✓ — tables with data:', rowCounts.length, '/', IDB_ENGINE.ALL_TABLES.length,
+        rowCounts.map(x=>x.t+'('+x.n+')').join(', '));
       }
     } catch(e){
       console.error('[DB.initIDB] IDB failed — falling back to localStorage only', e);
@@ -26807,6 +26853,11 @@ const NOTES_PAGE = {
 function noteSave(){ NOTES_PAGE.save(); } // §7 wrapper
 
 // ── BOOT ──
+// §v1.1.347: Global IDB-ready promise — Firebase _doLaunchApp awaits this
+//            before calling APP.launch() to avoid race condition
+window._idbReady = false;
+window._idbReadyPromise = new Promise(function(resolve){ window._idbReadyResolve = resolve; });
+
 document.addEventListener('DOMContentLoaded', async ()=>{
   // §v1.1.344: Initialize IndexedDB before anything else
   // Shows a brief splash, loads all data into _mem, then boots normally
@@ -26819,13 +26870,39 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   } catch(e){
     console.error('[Boot] IDB init error:', e);
   } finally {
-    // Always hide splash — even if IDB fails, app must remain usable
     if(splashEl) splashEl.style.display = 'none';
+    // Signal all waiters that IDB is ready (even on error — app must continue)
+    window._idbReady = true;
+    if(typeof window._idbReadyResolve === 'function') window._idbReadyResolve();
   }
+  // §v1.1.347: expose debug helper in browser console
+  window._debugStorage = () => DB.debugStorage();
   APP.boot();
   // Auto run system test after 2 seconds on first load
   // §v1.1.181: run silently at startup (silent=true → no toast on auto-boot)
   setTimeout(()=>{ try{ SYSTEM_TEST.run(true); }catch(e){ /* test skipped silently — non-critical */ } }, 2000);
+
+  // §v1.1.347: Post-boot watchdog — verify data loaded, show warning if still empty
+  setTimeout(()=>{
+    try{
+      const CRITICAL = ['USERS','SETTINGS','PRODUCTS'];
+      const allEmpty = CRITICAL.every(t => (DB.all(t)||[]).length === 0);
+      // Only warn if there IS localStorage data (not a fresh install)
+      const NS2='spos_v4_'; const hasLS = CRITICAL.some(t=>localStorage.getItem(NS2+t));
+      if(allEmpty && hasLS){
+        console.error('[Watchdog] _mem empty after 3s — data not loaded correctly!');
+        // Show non-blocking warning banner
+        const banner = document.createElement('div');
+        banner.id = 'idbWatchdogBanner';
+        banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:9998;background:#7f1d1d;color:#fef2f2;padding:12px 16px;font-family:Cairo,sans-serif;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:12px';
+        banner.innerHTML = '<span>⚠️ تعذّر تحميل البيانات — قد تظهر الصفحات فارغة. الرجاء إعادة تحميل الصفحة.</span>'
+          + '<button onclick="location.reload()" style="background:#fef2f2;color:#7f1d1d;border:none;border-radius:6px;padding:6px 14px;font-family:Cairo,sans-serif;font-weight:700;cursor:pointer">إعادة تحميل</button>';
+        document.body.appendChild(banner);
+        // Auto-reload after 5 seconds
+        setTimeout(()=>{ location.reload(); }, 5000);
+      }
+    }catch(_){}
+  }, 3000);
 });
 
 
@@ -27037,7 +27114,14 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   };
 
   // Launch app after successful license check (extracted to avoid duplication)
-  window._doLaunchApp = function(fbUser) {
+  // §v1.1.347: converted to async to await IDB ready before rendering
+  window._doLaunchApp = async function(fbUser) {
+    // §v1.1.347: Wait for IDB to finish loading _mem before rendering any page
+    if(window._idbReadyPromise && !window._idbReady){
+      console.info('[_doLaunchApp] Waiting for IDB to be ready...');
+      await window._idbReadyPromise;
+      console.info('[_doLaunchApp] IDB ready — proceeding with launch ✓');
+    }
     // Hide license screen if it was showing
     const ls = document.getElementById('licenseScreen');
     if (ls) ls.classList.add('hidden');
