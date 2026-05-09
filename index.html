@@ -2,8 +2,6 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-  <!-- §v1.1.346: Content-Security-Policy — blocks inline XSS escalation -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: data: blob:; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com https://www.gstatic.com https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https:; connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://oauth2.googleapis.com https://www.googleapis.com wss:;">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#0a0f1e">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -22,7 +20,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <!-- §v1.1.125: chartjs-plugin-datalabels — data labels on bars and doughnut slices -->
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-<!-- §v1.1.344: Dexie.js — IndexedDB abstraction layer (Phase 1 migration) -->
+<!-- §v1.1.343: Dexie.js — IndexedDB abstraction layer for Stage 1 IDB migration -->
 <script src="https://unpkg.com/dexie@3.2.4/dist/dexie.js"></script>
 <!-- Google Identity Services — Redirect OAuth 2.0 (cross-browser, no popups) -->
 <!-- GSI kept for renderButton as visual element only — all auth is handled by redirect flow -->
@@ -537,9 +535,9 @@ function loginScreenRestore(){
 }
 </script>
 <script>
-// §22-FIX-ERUDA: Dev-only console — loads only for admin account or ?dev=1
+// §22-FIX-ERUDA: Dev-only console — loads only for hamzaeldibo@gmail.com or ?dev=1
 (function(){
-  var DEV_EMAIL = (['hamzaeldibo','gmail.com'].join('@'));
+  var DEV_EMAIL = 'hamzaeldibo@gmail.com';
   var urlDev = (window.location.search.indexOf('dev=1') !== -1);
 
   function _positionEruda(){
@@ -561,16 +559,8 @@ function loginScreenRestore(){
     document.head.appendChild(s);
   }
 
-  // §v1.1.347 – Critical fix: race condition between Firebase Auth و DB.initIDB():
-//   • DB._get() يرجع إلى localStorage إذا كان _mem فارغاً أثناء السباق
-//   • _idbReadyPromise: promise عالمي يُشير لاكتمال IDB
-//   • _doLaunchApp async: تنتظر IDB قبل رندر أي صفحة
-//   • verboselogging في initIDB يُظهر عدد الجداول المحمّلة
-//   • debugStorage() متاح عبر window._debugStorage() في الكونسول
-//   • Watchdog بعد 3 ثوانٍ: يُظهر بانر تحذير + إعادة تحميل تلقائية
-// §v1.1.346: ?dev=1 no longer loads Eruda before login — deferred to auth check below
-  // (prevents unauthenticated users from accessing dev tools)
-  if(urlDev){ /* deferred — handled in auth poll below */ }
+  // Immediate load if ?dev=1 in URL (works before login)
+  if(urlDev){ _loadEruda(); return; }
 
   // Otherwise: wait for Firebase Auth, then check email
   var _attempts = 0;
@@ -580,7 +570,7 @@ function loginScreenRestore(){
     if(!window._fbAuth) return;
     clearInterval(_poll);
     window._fbAuth.onAuthStateChanged(function(user){
-      if(user && (user.email === DEV_EMAIL || urlDev)){ _loadEruda(); } // §v1.1.346: urlDev also requires auth
+      if(user && user.email === DEV_EMAIL){ _loadEruda(); }
       else if(window._erudaLoaded){
         // If wrong user signs in after load, hide the button
         var btn = document.querySelector('#eruda .eruda-entry-btn');
@@ -592,18 +582,6 @@ function loginScreenRestore(){
 </script>
 </head>
 <body>
-
-<!-- §v1.1.344: IDB Loading Splash — shown only during first boot/migration (milliseconds) -->
-<div id="idbSplash" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg,#0f172a);
-  flex-direction:column;align-items:center;justify-content:center;gap:16px;font-family:'Cairo',sans-serif">
-  <div style="font-size:36px">🏪</div>
-  <div style="font-size:16px;font-weight:700;color:var(--txt,#f1f5f9)">SmartStorePOS</div>
-  <div style="font-size:12px;color:var(--muted,#64748b)">جارٍ تحميل قاعدة البيانات…</div>
-  <div style="width:120px;height:3px;background:var(--bdr,#1e293b);border-radius:2px;overflow:hidden;margin-top:4px">
-    <div style="height:100%;background:var(--blue,#3b82f6);border-radius:2px;animation:idbPulse 1.2s ease-in-out infinite"></div>
-  </div>
-</div>
-<style>@keyframes idbPulse{0%{width:0%;margin-left:0}50%{width:60%;margin-left:20%}100%{width:0%;margin-left:100%}}</style>
 
 <!-- ═══ SETUP SCREEN (First Launch) ═══ -->
 <div class="screen" id="setupScreen">
@@ -712,7 +690,7 @@ function loginScreenRestore(){
 <nav id="sidebar">
   <div class="sblogo">
     <div class="sbli">🏪</div>
-    <div class="sblt"><h2 id="sbStore">SmartStorePOS</h2><span id="sidebarVersionBadge">Gold v1.1.347</span></div>
+    <div class="sblt"><h2 id="sbStore">SmartStorePOS</h2><span id="sidebarVersionBadge">Gold v1.1.248</span></div>
   </div>
   <div class="sbnav">
     <div class="sbsec">الرئيسية</div>
@@ -1625,7 +1603,7 @@ function loginScreenRestore(){
       </div>
     </div>
   </div>
-  <!-- §v1.1.269: Dev-only last-5-syncs monitor — visible only to admin account -->
+  <!-- §v1.1.269: Dev-only last-5-syncs monitor — visible only to hamzaeldibo@gmail.com -->
   <div id="devSyncMonitor" style="display:none;margin-bottom:16px">
     <div class="card" style="border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.04)">
       <div class="ch" style="margin-bottom:10px">
@@ -3762,158 +3740,45 @@ function loginScreenRestore(){
 //  db.js — Real DB Abstraction Engine
 // ════════════════════════════════════════════
 'use strict';
-
-// ════════════════════════════════════════════════════════════════════
-// §v1.1.346 – Security hardening:
-//   • escapeHtml() يغطي الآن علامة الاقتباس المفردة '
-//   • Dashboard _rows: escapeHtml دفاعي على label وarType
-//   • إيميل المدير: تفكيك النص (split/join) بدلاً من plain-text في الكود
-//   • ?dev=1: يتطلب الآن مصادقة Firebase قبل تحميل Eruda
-//   • جلسة الموظف: انتقلت من sessionStorage → localStorage (تبقى بعد إغلاق التبويب)
-//   • CSP meta tag: يحد من نطاق تنفيذ أي XSS محتمل
-// §v1.1.345 – IndexedDB Phase 2+3: إزالة كتابة localStorage من DB._set() (IDB فقط الآن),
-//             إضافة فهارس IDB على INVOICES/PRODUCTS/CUSTOMERS/EXPENSES (Dexie v2),
-//             DB.getStorageInfo() + DB.purgeLegacyLocalStorage(),
-//             مراقبة تخزين IDB في صفحة النسخ الاحتياطي مع زر تنظيف يدوي,
-//             تنظيف تلقائي لـ localStorage بعد 3 ثوانٍ من الإقلاع.
-// §v1.1.344: IDB_ENGINE — IndexedDB abstraction + in-memory cache
-// Architecture:
-//   • _mem{}        = in-memory cache (all reads go here — always synchronous)
-//   • IDB (Dexie)   = persistent storage (writes go here async in background)
-//   • localStorage  = dual-write fallback (kept during transition, removed in v1.1.345)
-// Rules:
-//   • DB._get(t)    reads from _mem (zero latency)
-//   • DB._set(t,d)  writes _mem synchronously, then IDB + localStorage async
-//   • DB.initIDB()  must be called at boot before APP.boot()
-// ════════════════════════════════════════════════════════════════════
-const IDB_ENGINE = (function(){
-  const DB_NAME   = 'SmartStorePOS';
-  const DB_VER    = 2; // §v1.1.345: bumped for index migration
-  const ALL_TABLES = [
-    'USERS','OPS_LOG','PRODUCTS','INVOICES','RETURNS','EXPENSES',
-    'EXPENSE_FILES','EXPENSE_ENTRIES','DEBTS','SUPPLIERS',
-    'PURCHASE_INVOICES','SUPPLIER_PAYMENTS','PURCHASE_RETURNS',
-    'SUPPLIER_CREDITS','BACKUPS','SYNC_LOG','CATEGORIES','SETTINGS',
-    'CUSTOMERS','CUSTOMER_CREDITS','INVENTORY_MOVEMENTS','NOTES'
-  ];
-  const MIGRATE_FLAG = '_idb_migrated_v1';
-  const NS           = 'spos_v4_';        // same namespace as legacy localStorage
-
-  let _dexie = null;
-
-  // ── Open Dexie database ──────────────────────────────────────────
-  async function _open(){
-    if(_dexie) return _dexie;
-    _dexie = new Dexie(DB_NAME);
-    // §v1.1.344: Version 1 — base schema (all tables, no indexes)
-    const schemaV1 = {};
-    ALL_TABLES.forEach(t => { schemaV1[t] = '++idbKey'; });
-    _dexie.version(1).stores(schemaV1);
-    // §v1.1.345: Version 2 — add indexes for frequently queried fields
-    // Indexes only speed up future async queries; synchronous _mem reads are unaffected
-    _dexie.version(2).stores({
-      ...schemaV1,
-      INVOICES:  '++idbKey, date, customer',
-      PRODUCTS:  '++idbKey, cat, code',
-      CUSTOMERS: '++idbKey, name',
-      EXPENSES:  '++idbKey, date'
-    });
-    await _dexie.open();
-    return _dexie;
-  }
-
-  // ── Write array of rows for one table to IDB ────────────────────
-  async function _writeTable(table, rows){
-    try {
-      const db = await _open();
-      await db[table].clear();
-      if(rows && rows.length > 0){
-        await db[table].bulkAdd(rows);
-      }
-    } catch(e){
-      console.warn('[IDB_ENGINE] write failed for', table, e);
-    }
-  }
-
-  // ── Read all rows for one table from IDB ────────────────────────
-  async function _readTable(table){
-    try {
-      const db = await _open();
-      const rows = await db[table].toArray();
-      // Strip the internal idbKey before returning to app
-      return rows.map(r => { const o = {...r}; delete o.idbKey; return o; });
-    } catch(e){
-      console.warn('[IDB_ENGINE] read failed for', table, e);
-      return [];
-    }
-  }
-
-  // ── One-time migration from localStorage → IDB ──────────────────
-  async function _migrate(mem){
-    if(localStorage.getItem(MIGRATE_FLAG)) return; // already migrated
-    let migrated = 0;
-    for(const t of ALL_TABLES){
-      // Use mem[t] if already loaded (recovery path), otherwise read localStorage
-      const rows = (mem[t] && mem[t].length > 0)
-        ? mem[t]
-        : (()=>{ try{ return JSON.parse(localStorage.getItem(NS + t)||'[]'); }catch(_){ return []; } })();
-      if(Array.isArray(rows) && rows.length > 0){
-        mem[t] = rows;
-        await _writeTable(t, rows);
-        migrated++;
-      }
-    }
-    localStorage.setItem(MIGRATE_FLAG, Date.now().toString());
-    console.info('[IDB_ENGINE] Migration complete —', migrated, 'tables moved to IndexedDB ✓');
-  }
-
-  // ── Load all tables from IDB into _mem ──────────────────────────
-  async function _loadAll(mem){
-    for(const t of ALL_TABLES){
-      const rows = await _readTable(t);
-      if(rows.length > 0 || !mem[t]){
-        mem[t] = rows;
-      }
-    }
-  }
-
-  return {
-    open:       _open,
-    writeTable: _writeTable,
-    readTable:  _readTable,
-    migrate:    _migrate,
-    loadAll:    _loadAll,
-    ALL_TABLES
-  };
-})();
-
 const DB = (function(){
   const NS = 'spos_v4_';
-  // §v1.1.344: In-memory cache — all synchronous reads served from here
+  // §v1.1.343: In-memory cache — populated on first _get, fully hydrated by initIDB() before boot
   const _mem = {};
-  // §v1.1.344: _get reads from _mem (zero latency, always synchronous)
-  // §v1.1.347: fallback to localStorage if _mem[t] empty (race condition guard)
-  function _get(t){
-    if(_mem[t] && _mem[t].length > 0) return _mem[t];
-    // IDB may not be ready yet — try localStorage as live fallback
-    try{
-      const raw = localStorage.getItem(NS + t);
-      if(raw){
-        const d = JSON.parse(raw);
-        if(Array.isArray(d) && d.length > 0){
-          _mem[t] = d; // seed mem for next reads
-          console.warn('[DB._get] Race fallback: loaded', t, 'from localStorage (', d.length, 'rows)');
-          return d;
-        }
-      }
-    }catch(_){}
-    return _mem[t] || [];
+
+  // §v1.1.343: Fire-and-forget async write to IndexedDB (background, never blocks)
+  function _writeToIDB(table, data) {
+    if (window._idbFailed) return;
+    if (!window.IDB_ENGINE) return;
+    window.IDB_ENGINE.writeTable(table, data).catch(function(e) {
+      console.warn('[IDB] writeTable failed for ' + table + ':', e);
+    });
   }
-  // §v1.1.345: _set — writes _mem (sync) + IDB (async). localStorage writes removed.
+
+  // §v1.1.343: _get now returns from _mem when populated — avoids redundant JSON.parse
+  function _get(t){
+    if (_mem[t] !== undefined) return _mem[t];
+    try {
+      const data = JSON.parse(localStorage.getItem(NS+t)||'[]');
+      _mem[t] = data;
+      return data;
+    } catch(e) { return []; }
+  }
+
   function _set(t,d){
-    _mem[t] = d; // synchronous — rest of app unaffected
-    // Async write to IndexedDB (fire and forget — errors logged only)
-    IDB_ENGINE.writeTable(t, d).catch(e => console.warn('[DB._set] IDB write error:', t, e));
+    _mem[t] = d; // §v1.1.343: Synchronous cache update — always first
+    _writeToIDB(t, d); // §v1.1.343: Async IDB dual-write — fire and forget
+    try {
+      localStorage.setItem(NS+t, JSON.stringify(d));
+    } catch(e) {
+      if(e.name==='QuotaExceededError'||e.code===22||e.code===1014) {
+        console.error('localStorage QuotaExceededError:', e);
+        // §v1.1.330: Show actionable modal instead of bare alert()
+        if(typeof _storageQuotaAlert === 'function') _storageQuotaAlert();
+        else alert('⚠️ تجاوز سعة التخزين المحلي.\nالرجاء حذف بعض النسخ الاحتياطية القديمة أو تصدير البيانات وتحرير مساحة.');
+      } else {
+        console.error('localStorage write failed:', e);
+      }
+    }
   }
   function _id(){ return 'id_'+Date.now()+'_'+Math.random().toString(36).slice(2,7); }
   return {
@@ -4005,108 +3870,128 @@ const DB = (function(){
       });
       _set(table, [...existing, ...toInsert]);
     },
-  // ── §v1.1.347: _debugStorage — logs _mem + IDB state to console ──
-  async debugStorage(){
-    console.group('[SmartStorePOS] Storage Debug v1.1.347');
-    console.info('IDB Ready:', window._idbReady);
-    const memSummary = {};
-    IDB_ENGINE.ALL_TABLES.forEach(t => { memSummary[t] = (_mem[t]||[]).length; });
-    console.table(memSummary);
-    const info = await DB.getStorageInfo().catch(()=>({supported:false}));
-    console.info('Storage quota:', info.supported
-      ? `${(info.usage/1024/1024).toFixed(1)}MB / ${(info.quota/1024/1024).toFixed(0)}MB (${info.percentUsed}%)`
-      : 'Not supported');
-    // Check localStorage
-    const NS2='spos_v4_'; let lsRows=0;
-    IDB_ENGINE.ALL_TABLES.forEach(t=>{
-      const r=localStorage.getItem(NS2+t);
-      if(r){ try{ lsRows+=JSON.parse(r).length; }catch(_){} }
-    });
-    console.info('localStorage rows (legacy):', lsRows);
-    console.groupEnd();
-    return memSummary;
-  },
-  // ── §v1.1.345: purgeLegacyLocalStorage — call once after stable boot ─
-  purgeLegacyLocalStorage(){
-    // §v1.1.346 SAFETY: never purge if IDB has no data (prevents data loss on IDB failure)
-    const hasIDBData = IDB_ENGINE.ALL_TABLES.some(t => (_mem[t]||[]).length > 0);
-    if(!hasIDBData){
-      console.warn('[DB] Skipping localStorage purge — IDB appears empty, keeping localStorage as backup');
-      return 0;
-    }
-    const NS2 = 'spos_v4_';
-    let removed = 0;
-    IDB_ENGINE.ALL_TABLES.forEach(t => {
-      if(localStorage.getItem(NS2 + t) !== null){
-        localStorage.removeItem(NS2 + t);
-        removed++;
-      }
-    });
-    console.info('[DB] Purged', removed, 'legacy localStorage keys ✓');
-    return removed;
-  },
-  // ── §v1.1.345: getStorageInfo — IDB quota via navigator.storage.estimate() ─
-  async getStorageInfo(){
-    try {
-      if(!navigator.storage || !navigator.storage.estimate){
-        return { supported: false, usage: 0, quota: 0, percentUsed: 0 };
-      }
-      const est = await navigator.storage.estimate();
-      const usage   = est.usage  || 0;
-      const quota   = est.quota  || 0;
-      const percent = quota > 0 ? Math.round((usage / quota) * 100) : 0;
-      return { supported: true, usage, quota, percentUsed: percent };
-    } catch(e){
-      console.warn('[DB.getStorageInfo]', e);
-      return { supported: false, usage: 0, quota: 0, percentUsed: 0 };
-    }
-  },
-  // ── §v1.1.344: initIDB — called at boot, before APP.boot() ────────
-  // Opens IndexedDB, runs one-time migration, loads all tables into _mem
-  initIDB: async function(){
-    const NS2 = 'spos_v4_';
-    // Helper: check if _mem has any real data
-    const _memHasData = () => IDB_ENGINE.ALL_TABLES.some(t => (_mem[t]||[]).length > 0);
-    // Helper: load all tables from localStorage into _mem
-    const _loadFromLS = () => {
-      let found = 0;
-      IDB_ENGINE.ALL_TABLES.forEach(t => {
-        try{
-          const d = JSON.parse(localStorage.getItem(NS2+t)||'[]');
-          if(Array.isArray(d)){ _mem[t] = d; if(d.length) found++; }
-        }catch(_){ _mem[t] = []; }
-      });
-      return found;
-    };
-    try{
-      await IDB_ENGINE.open();        // ensure Dexie is ready
-      await IDB_ENGINE.migrate(_mem); // one-time: localStorage → IDB (skipped if flag set)
-      await IDB_ENGINE.loadAll(_mem); // populate _mem from IDB
 
-      // §v1.1.346 SAFETY: If IDB returned no rows, recover from localStorage
-      if(!_memHasData()){
-        console.warn('[DB.initIDB] IDB empty — recovering from localStorage');
-        const lsCount = _loadFromLS();
-        if(lsCount > 0){
-          // Re-seed IDB from localStorage (clear stale flag first)
-          localStorage.removeItem('_idb_migrated_v1');
-          await IDB_ENGINE.migrate(_mem);
-          console.info('[DB.initIDB] Recovery complete —', lsCount, 'tables re-seeded into IDB ✓');
-        } else {
-          console.info('[DB.initIDB] Fresh install — no existing data ✓');
+    // §v1.1.343: Expose in-memory cache (getter) — used by initIDB and _debugStorage
+    get _mem() { return _mem; },
+
+    // §v1.1.343: initIDB — opens IndexedDB, runs one-time migration, hydrates _mem
+    // Called once during boot (before APP.boot). Safe to call even if IDB unavailable.
+    async initIDB() {
+      if (window._idbFailed) { console.log('[IDB] Skipped — already marked failed'); return; }
+      const ALL_TABLES = ['USERS','OPS_LOG','PRODUCTS','INVOICES','RETURNS','EXPENSES',
+        'EXPENSE_FILES','EXPENSE_ENTRIES','DEBTS','SUPPLIERS','PURCHASE_INVOICES',
+        'SUPPLIER_PAYMENTS','PURCHASE_RETURNS','SUPPLIER_CREDITS','BACKUPS','SYNC_LOG',
+        'CATEGORIES','SETTINGS','CUSTOMERS','CUSTOMER_CREDITS','INVENTORY_MOVEMENTS','NOTES'];
+      try {
+        if (!window.IDB_ENGINE || !window.IDB_ENGINE.isSupported()) {
+          throw new Error('IndexedDB not available in this environment');
         }
-      } else {
-        const rowCounts = IDB_ENGINE.ALL_TABLES.map(t=>({t, n:(_mem[t]||[]).length})).filter(x=>x.n>0);
-      console.info('[DB.initIDB] Ready ✓ — tables with data:', rowCounts.length, '/', IDB_ENGINE.ALL_TABLES.length,
-        rowCounts.map(x=>x.t+'('+x.n+')').join(', '));
+        console.log('[IDB] Opening SmartStorePOS database…');
+        await window.IDB_ENGINE.open();
+        console.log('[IDB] Running one-time migration check…');
+        await window.IDB_ENGINE.migrate();
+        console.log('[IDB] Hydrating _mem from IndexedDB…');
+        for (const t of ALL_TABLES) {
+          try {
+            const rows = await window.IDB_ENGINE.readTable(t);
+            // Only hydrate if IDB has data; otherwise localStorage _get() fills _mem lazily
+            if (rows && rows.length > 0) {
+              _mem[t] = rows;
+            }
+          } catch(e) {
+            console.warn('[IDB] readTable failed for ' + t + ':', e);
+          }
+        }
+        const hydrated = ALL_TABLES.filter(t => _mem[t] !== undefined).length;
+        console.log('[IDB] ✓ Stage 1 ready — ' + hydrated + '/' + ALL_TABLES.length + ' tables hydrated into _mem');
+      } catch(e) {
+        window._idbFailed = true;
+        console.warn('[IDB] Initialisation failed — falling back to localStorage only:', e.message || e);
       }
-    } catch(e){
-      console.error('[DB.initIDB] IDB failed — falling back to localStorage only', e);
-      _loadFromLS();
     }
-  }
   };
 })();
+
+// ──────────────────────────────────────────────────────────────────────────────
+// §v1.1.343: IDB_ENGINE — Dexie-based IndexedDB engine (Stage 1)
+// Provides open / writeTable / readTable / migrate / isSupported.
+// Used exclusively by DB.initIDB() and DB._writeToIDB().
+// ──────────────────────────────────────────────────────────────────────────────
+window.IDB_ENGINE = (function() {
+  const DB_NAME = 'SmartStorePOS';
+  const DB_VER  = 1;
+  const ALL_TABLES = [
+    'USERS','OPS_LOG','PRODUCTS','INVOICES','RETURNS','EXPENSES',
+    'EXPENSE_FILES','EXPENSE_ENTRIES','DEBTS','SUPPLIERS','PURCHASE_INVOICES',
+    'SUPPLIER_PAYMENTS','PURCHASE_RETURNS','SUPPLIER_CREDITS','BACKUPS','SYNC_LOG',
+    'CATEGORIES','SETTINGS','CUSTOMERS','CUSTOMER_CREDITS','INVENTORY_MOVEMENTS','NOTES'
+  ];
+  let _dexie = null;
+
+  function isSupported() {
+    try {
+      return typeof indexedDB !== 'undefined' && indexedDB !== null;
+    } catch(e) { return false; }
+  }
+
+  async function open() {
+    if (_dexie) return _dexie;
+    if (typeof Dexie === 'undefined') throw new Error('Dexie not loaded');
+    const db = new Dexie(DB_NAME);
+    const schema = {};
+    ALL_TABLES.forEach(function(t) { schema[t] = 'id'; });
+    db.version(DB_VER).stores(schema);
+    await db.open();
+    _dexie = db;
+    return _dexie;
+  }
+
+  async function writeTable(table, data) {
+    const db = await open();
+    if (!db[table]) { console.warn('[IDB] Unknown table:', table); return; }
+    await db[table].clear();
+    const valid = (data || []).filter(function(r) { return r && r.id; });
+    if (valid.length > 0) await db[table].bulkPut(valid);
+  }
+
+  async function readTable(table) {
+    const db = await open();
+    if (!db[table]) return [];
+    return db[table].toArray();
+  }
+
+  async function migrate() {
+    if (localStorage.getItem('_idb_migrated_v1') === 'true') {
+      console.log('[IDB] Migration already done — skipping');
+      return;
+    }
+    console.log('[IDB] Starting one-time migration from localStorage…');
+    const NS = 'spos_v4_';
+    let count = 0;
+    for (const t of ALL_TABLES) {
+      try {
+        const raw  = localStorage.getItem(NS + t);
+        const rows = raw ? JSON.parse(raw) : [];
+        if (rows.length > 0) {
+          await writeTable(t, rows);
+          count++;
+        }
+      } catch(e) {
+        console.warn('[IDB] Migration skipped for ' + t + ':', e);
+      }
+    }
+    localStorage.setItem('_idb_migrated_v1', 'true');
+    console.log('[IDB] Migration complete — ' + count + ' tables written to IndexedDB');
+  }
+
+  return { open, writeTable, readTable, migrate, isSupported };
+})();
+
+// §v1.1.343: Debug helper — call window._debugStorage() in DevTools to inspect _mem
+window._debugStorage = function() {
+  const keys = Object.keys(DB._mem);
+  console.log('[IDB] _mem tables: ' + keys.length, keys.length ? '| ' + keys.join(', ') : '(none yet)');
+};
 
 // ════ §v1.1.172: One-time migration — add payment-tracking fields to EXPENSES + EXPENSE_ENTRIES ════
 // Runs once at launch. Only touches records missing the new fields (idempotent).
@@ -4501,56 +4386,22 @@ const EVENTS = (function(){
 'use strict';
 const AUTH = (function(){
   const SESSION_KEY = 'spos_session_v4';
-  // §v1.1.344 – Infrastructure: IDB_ENGINE (Dexie.js), _memCache layer inside DB,
-//             dual-write to IndexedDB + localStorage (transition), one-time migration
-//             from localStorage → IndexedDB. Synchronous DB interface unchanged.
-// §v1.1.343: Legacy weak hash — kept for detecting old-format hashes only (never written again)
   function _hash(str){
     let h = 0;
     for(let i = 0; i < str.length; i++){ h = Math.imul(31, h) + str.charCodeAt(i) | 0; }
     return 'h_' + Math.abs(h).toString(16) + '_' + str.length;
   }
-  // §v1.1.343: SHA-256 + random salt (crypto.subtle) — new standard for all password writes
-  async function _sha256Hash(password) {
-    const salt = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-      .map(b => b.toString(16).padStart(2,'0')).join('');
-    const enc = new TextEncoder();
-    const keyData = enc.encode(salt + password);
-    const hashBuf = await crypto.subtle.digest('SHA-256', keyData);
-    const hashHex = Array.from(new Uint8Array(hashBuf))
-      .map(b => b.toString(16).padStart(2,'0')).join('');
-    return 'sha256:' + salt + ':' + hashHex;
-  }
-  // §v1.1.343: Verify password against stored hash (handles both old and new formats)
-  async function _verifyPassword(storedHash, password) {
-    if (!storedHash) return false;
-    if (storedHash.startsWith('sha256:')) {
-      const parts = storedHash.split(':');
-      if (parts.length !== 3) return false;
-      const salt = parts[1];
-      const expectedHex = parts[2];
-      const enc = new TextEncoder();
-      const keyData = enc.encode(salt + password);
-      const hashBuf = await crypto.subtle.digest('SHA-256', keyData);
-      const hashHex = Array.from(new Uint8Array(hashBuf))
-        .map(b => b.toString(16).padStart(2,'0')).join('');
-      return hashHex === expectedHex;
-    }
-    // Legacy fallback: compare with old weak hash
-    return storedHash === _hash(password);
-  }
   function _session(user){
     const s = { id: user.id, name: user.name, email: user.email, role: user.role, login_at: new Date().toISOString() };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(s)); // §v1.1.346: persists across tab close
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
     return s;
   }
   return {
-    hash(pw){ return _hash(pw); }, // §v1.1.343: legacy read-only (sync), use hashAsync() for writes
-    async hashAsync(pw){ return await _sha256Hash(pw); },
+    hash(pw){ return _hash(pw); },
     getSession(){
-      try{ return JSON.parse(localStorage.getItem(SESSION_KEY)||'null'); }catch(e){ return null; } // §v1.1.346
+      try{ return JSON.parse(sessionStorage.getItem(SESSION_KEY)||'null'); }catch(e){ return null; }
     },
-    clearSession(){ localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); }, // §v1.1.346: clear both
+    clearSession(){ sessionStorage.removeItem(SESSION_KEY); },
     createSession(user){ return _session(user); },
     hasOwner(){ return DB.count('USERS', { role: 'OWNER' }) > 0; },
     getOwner(){ return DB.findOne('USERS', { role: 'OWNER' }); },
@@ -4571,13 +4422,12 @@ const AUTH = (function(){
       }
       return owner;
     },
-    async createStaff(username, password, role, ownerName){
+    createStaff(username, password, role, ownerName){
       const owner = this.getOwner();
       if(!owner) throw new Error('لا يوجد مالك');
       if(DB.findOne('USERS', { username })) throw new Error('اسم المستخدم مستخدم مسبقاً');
-      const pwHash = await _sha256Hash(password); // §v1.1.343: SHA-256 + salt
       const user = DB.insert('USERS', {
-        username, password_hash: pwHash,
+        username, password_hash: _hash(password),
         email: '', name: ownerName || username, role,
         owner_id: owner.id
       });
@@ -4602,18 +4452,12 @@ const AUTH = (function(){
       EVENTS.log('LOGIN', { method: 'google', email: owner.email }, owner.id);
       return s;
     },
-    async loginStaff(username, password){
+    loginStaff(username, password){
       const user = DB.findOne('USERS', { username });
       if(!user) return null;
       if(user.role === 'OWNER') return null;
-      const ok = await _verifyPassword(user.password_hash, password); // §v1.1.343
-      if(!ok) return null;
+      if(user.password_hash !== _hash(password)) return null;
       if(user.status === 'موقوف') return null;
-      // §v1.1.343: Auto-upgrade legacy hash to SHA-256 on successful login
-      if(user.password_hash && !user.password_hash.startsWith('sha256:')){
-        const newHash = await _sha256Hash(password);
-        DB.update('USERS', user.id, { password_hash: newHash });
-      }
       // §v1.1.313: last_login is a session-tracking write, not a user-initiated data change
       //            — suppress schedulePush() to prevent spurious auto-sync after login
       const _prev = window._dbSuppressSync; window._dbSuppressSync = true;
@@ -5169,9 +5013,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.342'; // §v1.1.343 – Security: إصلاح XSS في معاينة الفاتورة (inv.customer, inv.notes, inv.cashier, _cc),
-//             ترقية تجزئة كلمات مرور الموظفين من XOR-hashCode إلى SHA-256 + salt عشوائي (crypto.subtle),
-//             دعم ترقية تلقائية للهاشات القديمة عند تسجيل الدخول.
+const APP_VERSION    = '1.1.343'; // §v1.1.343: IndexedDB Stage 1 — in-memory cache (_mem), dual-write (IDB+localStorage), safe fallback, fixed empty pages
 // §v1.1.342: Virtual scrolling for Stock Insights tab — _siVsBuildRows/_siVsAppend/_siVsAttach; exports unchanged (use full _siRows)
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
@@ -5307,13 +5149,11 @@ const REVENUE_NE_CASH  = true;  // §24 Rule 3: Prepaid is liability, not revenu
 // NOTE: Function is defined here but not yet applied (safe-start step).
 function escapeHtml(unsafe) {
   if (unsafe == null) return '';
-  // §v1.1.346: added &#39; to cover value='${...}' injection contexts
-  return String(unsafe).replace(/[&<>"']/g, function(m) {
+  return String(unsafe).replace(/[&<>"]/g, function(m) {
     if (m === '&') return '&amp;';
     if (m === '<') return '&lt;';
     if (m === '>') return '&gt;';
     if (m === '"') return '&quot;';
-    if (m === "'") return '&#39;';
     return m;
   });
 }
@@ -8522,7 +8362,7 @@ const APP = {
     const adminNav = document.getElementById('adminNavItem');
     if (adminNav) {
       const fbU = window._fbCurrentUser;
-      adminNav.style.display = (fbU && fbU.email === (['hamzaeldibo','gmail.com'].join('@'))) ? '' : 'none';
+      adminNav.style.display = (fbU && fbU.email === 'hamzaeldibo@gmail.com') ? '' : 'none';
     }
     const sbStore = document.getElementById('sbStore');
     if(sbStore) sbStore.textContent = getCfg().storeName;
@@ -9351,11 +9191,10 @@ const DASH = {
         else if(e.type==='RETURN')   label = `مرتجع: ${parseFloat(p.amt||0).toFixed(2)} ${s}`;
         const badge=e.type==='SALE'?'bem':e.type==='DEBT_PAYMENT'||e.type==='FIRST_INSTALLMENT'?'bbl':e.type==='EXPENSE'||e.type==='EXP_FILE_PAYMENT'?'bro':e.type==='RETURN'?'bgo':'bmu';
         // §v1.1.193-FIX1: Show Arabic label (not raw e.type) in the badge
-        // §v1.1.346: escapeHtml wraps arType+label defensively
-        const arType = escapeHtml(e.type==='SALE'
+        const arType = e.type==='SALE'
           ? DASH._saleLabel(p,false).slice(0,8)                        // §v1.1.209
-          : (window.EVENT_LABEL[e.type]!==undefined ? window.EVENT_LABEL[e.type].replace(/:.*/,'').slice(0,8) : e.type.slice(0,10)));
-        return`<div class="srow"><span class="badge ${badge}" style="font-size:9px;white-space:nowrap">${arType}</span><span style="font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(label)}</span><span style="font-size:10px;color:var(--muted);flex-shrink:0;margin-right:4px">${fmtLocalTime(e.timestamp)||''}</span></div>`;
+          : (window.EVENT_LABEL[e.type]!==undefined ? window.EVENT_LABEL[e.type].replace(/:.*/,'').slice(0,8) : e.type.slice(0,10));
+        return`<div class="srow"><span class="badge ${badge}" style="font-size:9px;white-space:nowrap">${arType}</span><span style="font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}</span><span style="font-size:10px;color:var(--muted);flex-shrink:0;margin-right:4px">${fmtLocalTime(e.timestamp)||''}</span></div>`;
       }).join('');
       // §v1.1.193-FIX2: Fixed max-height container — prevents layout overflow when many events
       rwEl.innerHTML = `<div style="max-height:280px;overflow-y:auto">${_rows||'<div class="empty" style="padding:20px"><p>لا توجد أحداث</p></div>'}</div>`;
@@ -10602,7 +10441,7 @@ const POS = {
     const rows=CART.map(it=>`<tr><td>${escapeHtml(it.name)}</td><td>${it.qty}</td><td>${it.price.toFixed(2)} ${s}</td><td>${(it.price*it.qty).toFixed(2)} ${s}</td></tr>`).join('');
     const disc=parseFloat(UI.val('tDisc'))||0;
     const tax=parseFloat(document.getElementById('tTax')?.textContent)||0;
-        document.getElementById('pdfContent').innerHTML=`<div class="pdfbox"><div class="pdfhdr"><div><div class="pdfco">🏪 ${escapeHtml(cfg.storeName||'')}</div><div style="font-size:11px;color:#6b7280">${escapeHtml(cfg.address||'')}</div></div><div style="text-align:left"><div style="font-size:14px;font-weight:800;color:#1a2440">فاتورة</div><div style="font-size:11px;color:#6b7280">${document.getElementById('billNum')?.textContent||''}</div><div style="font-size:11px;color:#6b7280">${todayISO()}</div></div></div><div class="pdfmeta"><div><strong>العميل:</strong> ${escapeHtml(UI.val('billCust')||'عميل عام')}${(()=>{const _cc=UI.val('billCustCode')||(DB.all('CUSTOMERS').find(cx=>cx.name===(UI.val('billCust')||''))?.code)||'';return _cc?` <span style="font-size:10px;color:#6b7280;font-family:monospace">(رمز: ${escapeHtml(_cc)})</span>`:''})()}</div>${_getCashierLineHtml('meta')}</div><table class="pdftbl"><thead><tr><th>المنتج</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>${rows}</tbody></table><div class="pdftots">${disc>0?`<div class="ptr"><span>خصم</span><span>${disc.toFixed(2)} ${s}</span></div>`:''}<div class="ptr grand"><span>الإجمالي</span><span>${grand.toFixed(2)} ${s}</span></div>${(()=>{try{const _cust=UI.val('billCust');const _cr=_cust&&_cust!=='عميل عام'?0:0;const _chk=document.getElementById('applyCreditChk');const _applied=(_chk&&_chk.checked&&_cr>0)?Math.min(_cr,grand):0;return (_applied>0?`<div class="ptr" style="color:#2563eb"><span>💳 رصيد مسبق مطبَّق</span><span>−${_applied.toFixed(2)} ${s}</span></div>`:'')+(_cr>0?`<div class="ptr" style="color:#6b7280;font-size:10px"><span>رصيد مسبق متبقٍ</span><span>${Math.max(0,_cr-_applied).toFixed(2)} ${s}</span></div>`:'');}catch(_){return '';}})()}</div><div class="pdffot">${cfg.footer||'شكراً لتسوقكم معنا!'}</div></div>`;
+        document.getElementById('pdfContent').innerHTML=`<div class="pdfbox"><div class="pdfhdr"><div><div class="pdfco">🏪 ${escapeHtml(cfg.storeName||'')}</div><div style="font-size:11px;color:#6b7280">${escapeHtml(cfg.address||'')}</div></div><div style="text-align:left"><div style="font-size:14px;font-weight:800;color:#1a2440">فاتورة</div><div style="font-size:11px;color:#6b7280">${document.getElementById('billNum')?.textContent||''}</div><div style="font-size:11px;color:#6b7280">${todayISO()}</div></div></div><div class="pdfmeta"><div><strong>العميل:</strong> ${escapeHtml(UI.val('billCust')||'عميل عام')}${(()=>{const _cc=UI.val('billCustCode')||(DB.all('CUSTOMERS').find(cx=>cx.name===(UI.val('billCust')||''))?.code)||'';return _cc?` <span style="font-size:10px;color:#6b7280;font-family:monospace">(رمز: ${_cc})</span>`:''})()}</div>${_getCashierLineHtml('meta')}</div><table class="pdftbl"><thead><tr><th>المنتج</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>${rows}</tbody></table><div class="pdftots">${disc>0?`<div class="ptr"><span>خصم</span><span>${disc.toFixed(2)} ${s}</span></div>`:''}<div class="ptr grand"><span>الإجمالي</span><span>${grand.toFixed(2)} ${s}</span></div>${(()=>{try{const _cust=UI.val('billCust');const _cr=_cust&&_cust!=='عميل عام'?0:0;const _chk=document.getElementById('applyCreditChk');const _applied=(_chk&&_chk.checked&&_cr>0)?Math.min(_cr,grand):0;return (_applied>0?`<div class="ptr" style="color:#2563eb"><span>💳 رصيد مسبق مطبَّق</span><span>−${_applied.toFixed(2)} ${s}</span></div>`:'')+(_cr>0?`<div class="ptr" style="color:#6b7280;font-size:10px"><span>رصيد مسبق متبقٍ</span><span>${Math.max(0,_cr-_applied).toFixed(2)} ${s}</span></div>`:'');}catch(_){return '';}})()}</div><div class="pdffot">${cfg.footer||'شكراً لتسوقكم معنا!'}</div></div>`;
     // §v1.1.108-FIX1: apply PDF page styles for correct multipage printing
     applyPdfStyles();
     UI.showModal('pdfModal');
@@ -10736,15 +10575,15 @@ function _getCashierLineHtml(style){
   if(!show) return '';
   const name = localStorage.getItem('spos_cashier_name') || 'Owner';
   return style==='meta'
-    ? `<div><strong>الكاشير:</strong> ${escapeHtml(name)}</div>`
-    : `<div class="row"><span>الكاشير</span><strong>${escapeHtml(name)}</strong></div>`;
+    ? `<div><strong>الكاشير:</strong> ${name}</div>`
+    : `<div class="row"><span>الكاشير</span><strong>${name}</strong></div>`;
 }
 // نسخة نصية للاستخدام في PDF مفتوح بنافذة مستقلة (HTML كامل)
 function _getCashierLineStandalone(){
   const show = localStorage.getItem('spos_show_cashier') !== 'false';
   if(!show) return '';
   const name = localStorage.getItem('spos_cashier_name') || 'Owner';
-  return `<div class="info-row"><span class="lbl">الكاشير</span><span class="val">${escapeHtml(name)}</span></div>`;
+  return `<div class="info-row"><span class="lbl">الكاشير</span><span class="val">${name}</span></div>`;
 }
 
 // ── INVOICES ──
@@ -11092,7 +10931,7 @@ const INVS = {
         </div>
       </div>
       <div class="pdfmeta">
-        <div><strong>العميل:</strong> ${escapeHtml(inv.customer)}${(()=>{const _cc=inv.custCode||inv.customerCode||(DB.all('CUSTOMERS').find(cx=>cx.name===inv.customer)?.code)||'';return _cc?` <span style="font-size:10px;color:#6b7280;font-family:monospace">(رمز: ${escapeHtml(_cc)})</span>`:''})()}</div>
+        <div><strong>العميل:</strong> ${inv.customer}${(()=>{const _cc=inv.custCode||inv.customerCode||(DB.all('CUSTOMERS').find(cx=>cx.name===inv.customer)?.code)||'';return _cc?` <span style="font-size:10px;color:#6b7280;font-family:monospace">(رمز: ${_cc})</span>`:''})()}</div>
         ${_getCashierLineHtml('meta')}
         <div><strong>طريقة الدفع:</strong> ${inv.payType==='cash'?'نقداً':inv.payType==='credit'?'دين آجل':inv.payType==='partial'?'جزئي':'تحويل'}</div>
         <div><strong>تاريخ الطباعة:</strong> ${todayISO()}</div>
@@ -11113,7 +10952,7 @@ const INVS = {
       ${debtSummaryHtml}
       ${payHistHtml}
       ${invReturnsPdfHtml}
-      ${inv.notes?`<div style="margin-top:12px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:11px"><div style="font-weight:700;color:#0369a1;margin-bottom:4px"><i class="fa-solid fa-note-sticky"></i> ملاحظات الفاتورة</div><div style="color:#1e40af;line-height:1.6;white-space:pre-wrap">${escapeHtml(inv.notes)}</div></div>`:''}
+      ${inv.notes?`<div style="margin-top:12px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:11px"><div style="font-weight:700;color:#0369a1;margin-bottom:4px"><i class="fa-solid fa-note-sticky"></i> ملاحظات الفاتورة</div><div style="color:#1e40af;line-height:1.6;white-space:pre-wrap">${inv.notes}</div></div>`:''}
       <div class="pdffot">${pdfCfg.pdfThankYou||pdfCfg.pdfFooter||cfg.footer||'شكراً لتسوقكم معنا!'}</div>
     </div>`;
     applyPdfStyles();
@@ -13566,7 +13405,7 @@ const DEBTS = {
         <div style="text-align:left"><div style="font-size:16px;font-weight:800;color:#1a2440">كشف حساب دين</div><div style="font-size:11px;color:#6b7280">تاريخ الطباعة: ${todayISO()}</div></div>
       </div>
       <div class="pdfmeta">
-        <div><strong>العميل:</strong> ${escapeHtml(d.customer)}${(()=>{const _cc=linkedInv?.custCode||(DB.all('CUSTOMERS').find(cx=>cx.name===d.customer)?.code)||'';return _cc?` <span style="font-size:10px;color:#6b7280;font-family:monospace">(رمز: ${escapeHtml(_cc)})</span>`:''})()}</div>
+        <div><strong>العميل:</strong> ${d.customer}${(()=>{const _cc=linkedInv?.custCode||(DB.all('CUSTOMERS').find(cx=>cx.name===d.customer)?.code)||'';return _cc?` <span style="font-size:10px;color:#6b7280;font-family:monospace">(رمز: ${_cc})</span>`:''})()}</div>
         <div><strong>تاريخ الدين:</strong> ${d.created_at?.slice(0,10)||'—'}</div>
         <div><strong>الفواتير المرتبطة:</strong> ${invNums.join(', ')||'—'}</div>
         <div><strong>الحالة:</strong> <span style="color:${remain>0?'#dc2626':'#16a34a'};font-weight:700">${d.status}</span></div>
@@ -16444,7 +16283,7 @@ const FIRESTORE_BACKUP = (function() {
   function _ready() {
     if (!_uid() || !_db()) return false;
     const email = window._fbCurrentUser ? (window._fbCurrentUser.email || '') : '';
-    return email === (['hamzaeldibo','gmail.com'].join('@')) || !!window._fbLicensePlan;
+    return email === 'hamzaeldibo@gmail.com' || !!window._fbLicensePlan;
   }
 
   function _chunkify(str) {
@@ -17109,7 +16948,7 @@ const FIRESTORE_BACKUP = (function() {
 // Queries entire backups/ collection (one read per user). 24h cache.
 // Email-gated, silent failure, verbose F12 logging. Zero cost for regular users.
 const ADMIN_STORAGE = (function(){
-  const ADMIN_EMAIL   = (['hamzaeldibo','gmail.com'].join('@'));
+  const ADMIN_EMAIL   = 'hamzaeldibo@gmail.com';
   const CACHE_TTL_MS  = 24 * 60 * 60 * 1000;  // 24 hours
   const FREE_TIER_MB  = 1024;
 
@@ -23030,20 +22869,15 @@ const USERS_PAGE = {
     if(id){ const u=DB.all('USERS').find(x=>x.id===id); if(u){ UI.setVal('uName',u.name); UI.setVal('uUname',u.username); UI.setVal('uRole',u.role); UI.setVal('uStat',u.status||'نشط'); } }
     UI.showModal('userModal');
   },
-  async save(){
+  save(){
     const name=UI.val('uName').trim(), uname=UI.val('uUname').trim(), pass=UI.val('uPass'), pass2=UI.val('uPass2');
     if(!name||!uname){ TOAST.err('الاسم واسم المستخدم إلزاميان'); return; }
     if(pass&&pass!==pass2){ TOAST.err('كلمتا المرور لا تتطابقان'); return; }
     const editId=UI.val('eUserId');
     const s=AUTH.getSession();
-    if(editId){
-      // §v1.1.343: use SHA-256 for password updates
-      const pwFields = pass ? { password_hash: await AUTH.hashAsync(pass) } : {};
-      DB.update('USERS',editId,{name,username:uname,role:UI.val('uRole'),status:UI.val('uStat'),...pwFields});
-      EVENTS.log('UPDATE_USER',{username:uname},s?.id);
-    }
+    if(editId){ DB.update('USERS',editId,{name,username:uname,role:UI.val('uRole'),status:UI.val('uStat'),...(pass?{password_hash:AUTH.hash(pass)}:{})}); EVENTS.log('UPDATE_USER',{username:uname},s?.id); }
     else{
-      try{ await AUTH.createStaff(uname,pass,UI.val('uRole'),name); } // §v1.1.343: async
+      try{ AUTH.createStaff(uname,pass,UI.val('uRole'),name); }
       catch(e){ TOAST.err(e.message); return; }
       // Update name manually
       const nu=DB.findOne('USERS',{username:uname});
@@ -23060,37 +22894,6 @@ function toggleUser(id){ USERS_PAGE.toggle(id); }
 
 // ── BACKUP PAGE ──
 const BKP_PAGE = {
-  // §v1.1.345: Refresh IDB storage gauge asynchronously
-  async refreshStorageGauge(){
-    const info = await DB.getStorageInfo();
-    const usedMB  = (info.usage  / (1024*1024)).toFixed(1);
-    const quotaMB = (info.quota  / (1024*1024)).toFixed(0);
-    const pct     = info.percentUsed;
-    const color   = pct >= 80 ? 'var(--red)' : pct >= 60 ? 'var(--gold)' : 'var(--green)';
-    const status  = pct >= 80 ? '🔴 خطر — مساحة ممتلئة تقريباً'
-                  : pct >= 60 ? '🟡 تحذير — مساحة تقترب من الامتلاء'
-                  : '🟢 مساحة كافية';
-    const _s = id => document.getElementById(id);
-    if(!info.supported){
-      if(_s('idbGaugeMB')) _s('idbGaugeMB').textContent = 'غير مدعوم في هذا المتصفح';
-      return;
-    }
-    if(_s('idbGaugeMB'))     _s('idbGaugeMB').textContent = `${usedMB} MB / ${quotaMB} MB`;
-    if(_s('idbGaugeBar'))    { _s('idbGaugeBar').style.width = pct+'%'; _s('idbGaugeBar').style.background = color; }
-    if(_s('idbGaugeStatus')) _s('idbGaugeStatus').textContent = status;
-    if(_s('idbGaugePct'))    _s('idbGaugePct').textContent = pct + '% مستخدم';
-    if(_s('idbGaugeWarn'))   _s('idbGaugeWarn').style.display = pct >= 80 ? 'block' : 'none';
-  },
-  // §v1.1.345: Manual purge of legacy localStorage keys
-  purgeLocalStorage(){
-    const removed = DB.purgeLegacyLocalStorage();
-    if(removed > 0){
-      TOAST.ok(`✓ تم حذف ${removed} مفتاح قديم من localStorage — تم تحرير المساحة`);
-    } else {
-      TOAST.ok('✓ localStorage نظيف بالفعل — لا توجد بيانات قديمة');
-    }
-    setTimeout(() => this.refreshStorageGauge(), 500);
-  },
   // §v1.1.110: Check hash chain integrity and show result in UI
   checkHashChain(){
     const result = LEDGER_HASH.verifyIntegrity();
@@ -23127,37 +22930,31 @@ const BKP_PAGE = {
     const bkps=DB.all('BACKUPS').sort((a,b)=>(b.created_at||'').localeCompare(a.created_at||''));
     const prods=DB.count('PRODUCTS'), invs=DB.count('INVOICES'), exps=DB.count('EXPENSES'), evts=EVENTS.count();
     const connected = DRIVE_SYNC.isConnected();
-    // §v1.1.345: Storage gauge — IndexedDB quota via navigator.storage.estimate()
+    // §v1.1.330: Storage gauge — localStorage usage meter
     const gaugeEl = document.getElementById('storageGauge');
-    if(gaugeEl){
+    if (gaugeEl) {
+      const _su = _storageUsage();
+      const usedMB = (_su.used / (1024*1024)).toFixed(2);
+      const limitMB = (_su.limit / (1024*1024)).toFixed(0);
+      const barColor = _su.pct >= 95 ? 'var(--red,#e53e3e)' : _su.pct >= 80 ? 'var(--gold,#d69e2e)' : 'var(--green,#38a169)';
+      const statusTxt = _su.pct >= 95 ? '🔴 خطر — مساحة ممتلئة تقريباً' : _su.pct >= 80 ? '🟡 تحذير — مساحة تقترب من الامتلاء' : '🟢 مساحة كافية';
+      const tipHtml = _su.pct >= 80
+        ? `<div style="margin-top:10px;font-size:12px;color:var(--txt,#e2e8f0);background:rgba(214,158,46,.1);border:1px solid rgba(214,158,46,.25);border-radius:8px;padding:8px 10px">💡 يُنصح بتفعيل <strong>الملف المحمول</strong> من صفحة <a href="javascript:void(0)" onclick="goTo('settings')" style="color:var(--blue,#3b82f6);text-decoration:underline">الإعدادات</a> لحماية بياناتك.</div>`
+        : '';
       gaugeEl.innerHTML = `<div class="card" style="padding:14px 16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <span style="font-size:13px;font-weight:700;color:var(--txt)">
-            <i class="fa-solid fa-database" style="margin-left:6px;color:var(--blue)"></i>مساحة IndexedDB
-          </span>
-          <span id="idbGaugeMB" style="font-size:12px;color:var(--muted)">جارٍ القياس…</span>
+          <span style="font-size:13px;font-weight:700;color:var(--txt)"><i class="fa-solid fa-hard-drive" style="margin-left:6px;color:${barColor}"></i>مساحة التخزين المحلي (localStorage)</span>
+          <span style="font-size:12px;color:var(--muted)">${usedMB} MB / ${limitMB} MB</span>
         </div>
-        <div style="background:var(--card2);border-radius:6px;height:10px;overflow:hidden">
-          <div id="idbGaugeBar" style="height:100%;width:0%;background:var(--green);border-radius:6px;transition:width .4s"></div>
+        <div style="background:var(--card2,#2d3748);border-radius:6px;height:10px;overflow:hidden">
+          <div style="height:100%;width:${_su.pct}%;background:${barColor};border-radius:6px;transition:width .3s"></div>
         </div>
         <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--muted)">
-          <span id="idbGaugeStatus">—</span>
-          <span id="idbGaugePct">—</span>
+          <span>${statusTxt}</span>
+          <span>${_su.pct}% مستخدم</span>
         </div>
-        <div id="idbGaugeWarn" style="display:none;margin-top:10px;font-size:12px;color:var(--txt);background:rgba(214,158,46,.1);border:1px solid rgba(214,158,46,.25);border-radius:8px;padding:8px 10px">
-          ⚠️ المساحة تقترب من الامتلاء. يُنصح بتصدير نسخة احتياطية الآن.
-        </div>
-        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
-          <button class="btn bgh bsm" onclick="BKP_PAGE.refreshStorageGauge()">
-            <i class="fa-solid fa-rotate"></i> تحديث
-          </button>
-          <button class="btn br bsm" onclick="BKP_PAGE.purgeLocalStorage()" title="حذف بيانات localStorage القديمة (محفوظة في IndexedDB)">
-            <i class="fa-solid fa-broom"></i> تنظيف localStorage
-          </button>
-        </div>
+        ${tipHtml}
       </div>`;
-      // Async fill
-      BKP_PAGE.refreshStorageGauge();
     }
     const kpiEl=document.getElementById('bkpKPIs');
     if(kpiEl) kpiEl.innerHTML=`<div class="kpi kgr"><div class="ki"><i class="fa-solid fa-circle-check"></i></div><div class="kv2">${bkps.filter(b=>b.status==='ناجح').length}</div><div class="klbl">نسخ ناجحة</div></div><div class="kpi kb"><div class="ki"><i class="fa-solid fa-database"></i></div><div class="kv2">${prods+invs+exps}</div><div class="klbl">إجمالي السجلات</div></div><div class="kpi kg"><div class="ki"><i class="fa-solid fa-list-check"></i></div><div class="kv2">${evts}</div><div class="klbl">إجمالي الأحداث</div></div><div class="kpi ${connected?'kg':'kv'}"><div class="ki"><i class="fa-brands fa-google-drive"></i></div><div class="kv2" style="font-size:12px">${connected?'✓ متصل':'غير متصل'}</div><div class="klbl">Google Drive</div></div>`;
@@ -23189,7 +22986,7 @@ const BKP_PAGE = {
       const devList  = document.getElementById('devLast5Syncs');
       if (!devPanel || !devList) return;
       const fbU = window._fbCurrentUser;
-      if (!fbU || fbU.email !== (['hamzaeldibo','gmail.com'].join('@'))) { devPanel.style.display = 'none'; return; }
+      if (!fbU || fbU.email !== 'hamzaeldibo@gmail.com') { devPanel.style.display = 'none'; return; }
       devPanel.style.display = '';
       const last5 = DB.all('SYNC_LOG')
         .filter(function(r) { return r.dest === 'Firestore'; })
@@ -23523,7 +23320,7 @@ const ADMIN_PAGE = {
   // Users with only a users-doc (no license) appear as pending.
   render() {
     const fbU = window._fbCurrentUser;
-    if (!fbU || fbU.email !== (['hamzaeldibo','gmail.com'].join('@'))) { APP.goTo('dashboard'); return; }
+    if (!fbU || fbU.email !== 'hamzaeldibo@gmail.com') { APP.goTo('dashboard'); return; }
     // §v1.1.253 #64: Start periodic session check when admin panel opens
     this._startSessionCheck();
 
@@ -23794,7 +23591,7 @@ const ADMIN_PAGE = {
     if (!this._checkSession()) return; // §v1.1.253 #64: abort if session expired
     const fbU = window._fbCurrentUser;
     if (!fbU) { console.error('[AdminPage] grantLicense: no _fbCurrentUser'); return; }
-    if (fbU.email !== (['hamzaeldibo','gmail.com'].join('@'))) { console.error('[AdminPage] grantLicense: not admin, got:', fbU.email); return; }
+    if (fbU.email !== 'hamzaeldibo@gmail.com') { console.error('[AdminPage] grantLicense: not admin, got:', fbU.email); return; }
 
     const plan = prompt('اختر نوع الترخيص:\n  monthly  — شهر واحد\n  yearly   — سنة كاملة\n  trial    — تجريبي 7 أيام', 'monthly');
     if (!plan) { if(window.DEV_MODE) console.log('[AdminPage] grantLicense: cancelled'); return; }
@@ -23885,7 +23682,7 @@ const ADMIN_PAGE = {
     if (!this._checkSession()) return; // §v1.1.253 #64: abort if session expired
     const fbU = window._fbCurrentUser;
     if (!fbU) { console.error('[AdminPage] cancelLicense: no _fbCurrentUser'); return; }
-    if (fbU.email !== (['hamzaeldibo','gmail.com'].join('@'))) { console.error('[AdminPage] cancelLicense: not admin'); return; }
+    if (fbU.email !== 'hamzaeldibo@gmail.com') { console.error('[AdminPage] cancelLicense: not admin'); return; }
     if (!confirm('هل أنت متأكد من إيقاف اشتراك ' + email + '؟\n\nملاحظة: سيتم تغيير الحالة إلى "ملغي" وسيفقد المستخدم الوصول.\nلن يتم حذف البيانات ولن يتم رد الأموال تلقائياً.')) return;
 
     const self = this;
@@ -23912,7 +23709,7 @@ const ADMIN_PAGE = {
     if (!this._checkSession()) return; // §v1.1.253 #64: abort if session expired
     const fbU = window._fbCurrentUser;
     if (!fbU) { console.error('[AdminPage] revokeLicense: no _fbCurrentUser'); return; }
-    if (fbU.email !== (['hamzaeldibo','gmail.com'].join('@'))) { console.error('[AdminPage] revokeLicense: not admin'); return; }
+    if (fbU.email !== 'hamzaeldibo@gmail.com') { console.error('[AdminPage] revokeLicense: not admin'); return; }
     if (!confirm('هل أنت متأكد من إلغاء ترخيص هذا المستخدم؟\nسيتم حذف الترخيص وإعادة تعيين الخطة إلى pending.')) return;
 
     const self = this;
@@ -23941,7 +23738,7 @@ const ADMIN_PAGE = {
   deleteUser(uid, email) {
     if (!this._checkSession()) return; // §v1.1.253 #64: abort if session expired
     const fbU = window._fbCurrentUser;
-    if (!fbU || fbU.email !== (['hamzaeldibo','gmail.com'].join('@'))) { console.error('[AdminPage] deleteUser: not admin'); return; }
+    if (!fbU || fbU.email !== 'hamzaeldibo@gmail.com') { console.error('[AdminPage] deleteUser: not admin'); return; }
     if (fbU.uid === uid) { TOAST.err('لا يمكن حذف حسابك الخاص'); return; }
     if (!confirm('هل أنت متأكد من حذف هذا المستخدم نهائياً؟\n(' + (email||uid) + ')\n\nلا يمكن التراجع عن هذه العملية.')) return;
 
@@ -25079,7 +24876,7 @@ const SYSTEM_TEST = {
     check('DB.all returns array', ()=>{ const r=DB.all('PRODUCTS'); if(!Array.isArray(r)) throw new Error('not array'); });
 
     // ── §GROUP-2: Auth & Engine Presence ──
-    check('AUTH.hashAsync exists', ()=>{ if(typeof AUTH.hashAsync !== 'function') throw new Error('hashAsync missing'); }); // §v1.1.343: replaced weak hash check
+    check('AUTH.hash stable', ()=>{ if(AUTH.hash('test')!==AUTH.hash('test')) throw new Error('hash unstable'); });
     check('Owner exists (or first-run)', ()=>{ if(!AUTH.hasOwner()){ console.info('[SYSTEM_TEST] No owner — first-run setup not yet complete. Skipping.'); return; } });
     check('EVENTS.log works', ()=>{ const e=EVENTS.log('TEST_EVENT',{x:1},'system'); if(!e.id) throw new Error('no event id'); });
     check('Products seeded (or first-run)', ()=>{ if(!AUTH.hasOwner()) return; if(DB.count('PRODUCTS')===0){ console.info('[SYSTEM_TEST] No products — first-run, skipping.'); return; } });
@@ -26853,56 +26650,37 @@ const NOTES_PAGE = {
 function noteSave(){ NOTES_PAGE.save(); } // §7 wrapper
 
 // ── BOOT ──
-// §v1.1.347: Global IDB-ready promise — Firebase _doLaunchApp awaits this
-//            before calling APP.launch() to avoid race condition
-window._idbReady = false;
-window._idbReadyPromise = new Promise(function(resolve){ window._idbReadyResolve = resolve; });
-
+// §v1.1.343: Boot is now async — awaits DB.initIDB() before APP.boot() to ensure
+// _mem is hydrated from IndexedDB, fixing empty-page issues on first render.
 document.addEventListener('DOMContentLoaded', async ()=>{
-  // §v1.1.344: Initialize IndexedDB before anything else
-  // Shows a brief splash, loads all data into _mem, then boots normally
-  const splashEl = document.getElementById('idbSplash');
-  try {
-    if(splashEl) splashEl.style.display = 'flex';
-    await DB.initIDB();
-    // §v1.1.345: Purge legacy localStorage keys now that IDB is primary
-    setTimeout(() => { try{ DB.purgeLegacyLocalStorage(); }catch(_){} }, 3000);
-  } catch(e){
-    console.error('[Boot] IDB init error:', e);
-  } finally {
-    if(splashEl) splashEl.style.display = 'none';
-    // Signal all waiters that IDB is ready (even on error — app must continue)
-    window._idbReady = true;
-    if(typeof window._idbReadyResolve === 'function') window._idbReadyResolve();
-  }
-  // §v1.1.347: expose debug helper in browser console
-  window._debugStorage = () => DB.debugStorage();
+  // Show a minimal splash while IDB initialises (hides blank screen)
+  const _idbSplash = document.createElement('div');
+  _idbSplash.id = 'idbSplash';
+  _idbSplash.style.cssText = [
+    'position:fixed;top:0;left:0;width:100%;height:100%',
+    'background:#0a0f1e;display:flex;align-items:center;justify-content:center',
+    'z-index:99999;color:#f1f5f9;font-family:Cairo,sans-serif;font-size:18px;direction:rtl'
+  ].join(';');
+  _idbSplash.textContent = 'جارِ التحميل…';
+  document.body.appendChild(_idbSplash);
+
+  // Watchdog: if initIDB hangs (e.g. slow private-browsing IDB), proceed after 3 s
+  const _idbWatchdog = new Promise(function(resolve) {
+    setTimeout(function() {
+      console.warn('[IDB] initIDB watchdog triggered (3 s) — proceeding without IDB');
+      window._idbFailed = true;
+      resolve();
+    }, 3000);
+  });
+
+  await Promise.race([ DB.initIDB(), _idbWatchdog ]);
+
+  _idbSplash.remove();
+
   APP.boot();
   // Auto run system test after 2 seconds on first load
   // §v1.1.181: run silently at startup (silent=true → no toast on auto-boot)
   setTimeout(()=>{ try{ SYSTEM_TEST.run(true); }catch(e){ /* test skipped silently — non-critical */ } }, 2000);
-
-  // §v1.1.347: Post-boot watchdog — verify data loaded, show warning if still empty
-  setTimeout(()=>{
-    try{
-      const CRITICAL = ['USERS','SETTINGS','PRODUCTS'];
-      const allEmpty = CRITICAL.every(t => (DB.all(t)||[]).length === 0);
-      // Only warn if there IS localStorage data (not a fresh install)
-      const NS2='spos_v4_'; const hasLS = CRITICAL.some(t=>localStorage.getItem(NS2+t));
-      if(allEmpty && hasLS){
-        console.error('[Watchdog] _mem empty after 3s — data not loaded correctly!');
-        // Show non-blocking warning banner
-        const banner = document.createElement('div');
-        banner.id = 'idbWatchdogBanner';
-        banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:9998;background:#7f1d1d;color:#fef2f2;padding:12px 16px;font-family:Cairo,sans-serif;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:12px';
-        banner.innerHTML = '<span>⚠️ تعذّر تحميل البيانات — قد تظهر الصفحات فارغة. الرجاء إعادة تحميل الصفحة.</span>'
-          + '<button onclick="location.reload()" style="background:#fef2f2;color:#7f1d1d;border:none;border-radius:6px;padding:6px 14px;font-family:Cairo,sans-serif;font-weight:700;cursor:pointer">إعادة تحميل</button>';
-        document.body.appendChild(banner);
-        // Auto-reload after 5 seconds
-        setTimeout(()=>{ location.reload(); }, 5000);
-      }
-    }catch(_){}
-  }, 3000);
 });
 
 
@@ -26971,7 +26749,7 @@ document.addEventListener('DOMContentLoaded', async ()=>{
 
       // §v1.1.60: LICENSE CHECK — verify Firestore license before launching app
       // Admin email bypasses the check (always allowed)
-      const ADMIN_EMAIL = (['hamzaeldibo','gmail.com'].join('@'));
+      const ADMIN_EMAIL = 'hamzaeldibo@gmail.com';
 
       // §v1.1.61: Upsert user document (runs for ALL users including admin)
       _fbDb.collection('users').doc(fbUser.uid).get()
@@ -27114,14 +26892,7 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   };
 
   // Launch app after successful license check (extracted to avoid duplication)
-  // §v1.1.347: converted to async to await IDB ready before rendering
-  window._doLaunchApp = async function(fbUser) {
-    // §v1.1.347: Wait for IDB to finish loading _mem before rendering any page
-    if(window._idbReadyPromise && !window._idbReady){
-      console.info('[_doLaunchApp] Waiting for IDB to be ready...');
-      await window._idbReadyPromise;
-      console.info('[_doLaunchApp] IDB ready — proceeding with launch ✓');
-    }
+  window._doLaunchApp = function(fbUser) {
     // Hide license screen if it was showing
     const ls = document.getElementById('licenseScreen');
     if (ls) ls.classList.add('hidden');
@@ -27280,7 +27051,7 @@ document.addEventListener('DOMContentLoaded', async ()=>{
       }
       const fbU = window._fbCurrentUser;
       if (!fbU || fbU.uid !== fbUser.uid) return; // user changed or signed out
-      if (fbU.email === (['hamzaeldibo','gmail.com'].join('@'))) return; // admin exempt
+      if (fbU.email === 'hamzaeldibo@gmail.com') return; // admin exempt
 
       if(window.DEV_MODE) console.log('[LicenseWatchdog] Re-checking license for:', fbU.email);
       window._fbDb.collection('licenses').doc(fbU.uid).get()
