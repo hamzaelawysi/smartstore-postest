@@ -20,8 +20,6 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <!-- §v1.1.125: chartjs-plugin-datalabels — data labels on bars and doughnut slices -->
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-<!-- §v1.1.343: Dexie.js — IndexedDB abstraction layer for Stage 1 IDB migration -->
-<script src="https://unpkg.com/dexie@3.2.4/dist/dexie.js"></script>
 <!-- Google Identity Services — Redirect OAuth 2.0 (cross-browser, no popups) -->
 <!-- GSI kept for renderButton as visual element only — all auth is handled by redirect flow -->
 <script src="https://accounts.google.com/gsi/client" async defer onload="window.GOOGLE_AUTH?GOOGLE_AUTH._onGSIReady():(window._gsiPending=true)"></script>
@@ -3742,31 +3740,8 @@ function loginScreenRestore(){
 'use strict';
 const DB = (function(){
   const NS = 'spos_v4_';
-  // §v1.1.343: In-memory cache — populated on first _get, fully hydrated by initIDB() before boot
-  const _mem = {};
-
-  // §v1.1.343: Fire-and-forget async write to IndexedDB (background, never blocks)
-  function _writeToIDB(table, data) {
-    if (window._idbFailed) return;
-    if (!window.IDB_ENGINE) return;
-    window.IDB_ENGINE.writeTable(table, data).catch(function(e) {
-      console.warn('[IDB] writeTable failed for ' + table + ':', e);
-    });
-  }
-
-  // §v1.1.343: _get now returns from _mem when populated — avoids redundant JSON.parse
-  function _get(t){
-    if (_mem[t] !== undefined) return _mem[t];
-    try {
-      const data = JSON.parse(localStorage.getItem(NS+t)||'[]');
-      _mem[t] = data;
-      return data;
-    } catch(e) { return []; }
-  }
-
+  function _get(t){ try{ return JSON.parse(localStorage.getItem(NS+t)||'[]'); }catch(e){ return []; } }
   function _set(t,d){
-    _mem[t] = d; // §v1.1.343: Synchronous cache update — always first
-    _writeToIDB(t, d); // §v1.1.343: Async IDB dual-write — fire and forget
     try {
       localStorage.setItem(NS+t, JSON.stringify(d));
     } catch(e) {
@@ -3869,116 +3844,9 @@ const DB = (function(){
         return true;
       });
       _set(table, [...existing, ...toInsert]);
-    },
-
-    // §v1.1.343: Expose in-memory cache (getter) — used by initIDB and _debugStorage
-    get _mem() { return _mem; },
-
-    // §v1.1.343: initIDB — opens IndexedDB, runs one-time migration, hydrates _mem
-    // Called once during boot (before APP.boot). Safe to call even if IDB unavailable.
-    async initIDB() {
-      // §v1.1.343-FIX: Stage 1 — IDB open + one-time migration only.
-      // _mem is a lazy localStorage read-cache; hydrating _mem from IDB is deferred to Stage 2+.
-      // Reason: IDB readTable after migrate() could return a stale snapshot and overwrite
-      // _mem with data older than what APP.boot() already rendered from localStorage.
-      if (window._idbFailed) { console.log('[IDB] Skipped — already marked failed'); return; }
-      try {
-        if (!window.IDB_ENGINE || !window.IDB_ENGINE.isSupported()) {
-          throw new Error('IndexedDB not available in this environment');
-        }
-        console.log('[IDB] Opening SmartStorePOS database…');
-        await window.IDB_ENGINE.open();
-        console.log('[IDB] Running one-time migration check…');
-        await window.IDB_ENGINE.migrate();
-        console.log('[IDB] ✓ Stage 1 ready — dual-write (IDB + localStorage) active');
-      } catch(e) {
-        window._idbFailed = true;
-        console.warn('[IDB] Initialisation failed — localStorage-only mode:', e.message || e);
-      }
     }
   };
 })();
-
-// ──────────────────────────────────────────────────────────────────────────────
-// §v1.1.343: IDB_ENGINE — Dexie-based IndexedDB engine (Stage 1)
-// Provides open / writeTable / readTable / migrate / isSupported.
-// Used exclusively by DB.initIDB() and DB._writeToIDB().
-// ──────────────────────────────────────────────────────────────────────────────
-window.IDB_ENGINE = (function() {
-  const DB_NAME = 'SmartStorePOS';
-  const DB_VER  = 1;
-  const ALL_TABLES = [
-    'USERS','OPS_LOG','PRODUCTS','INVOICES','RETURNS','EXPENSES',
-    'EXPENSE_FILES','EXPENSE_ENTRIES','DEBTS','SUPPLIERS','PURCHASE_INVOICES',
-    'SUPPLIER_PAYMENTS','PURCHASE_RETURNS','SUPPLIER_CREDITS','BACKUPS','SYNC_LOG',
-    'CATEGORIES','SETTINGS','CUSTOMERS','CUSTOMER_CREDITS','INVENTORY_MOVEMENTS','NOTES'
-  ];
-  let _dexie = null;
-
-  function isSupported() {
-    try {
-      return typeof indexedDB !== 'undefined' && indexedDB !== null;
-    } catch(e) { return false; }
-  }
-
-  async function open() {
-    if (_dexie) return _dexie;
-    if (typeof Dexie === 'undefined') throw new Error('Dexie not loaded');
-    const db = new Dexie(DB_NAME);
-    const schema = {};
-    ALL_TABLES.forEach(function(t) { schema[t] = 'id'; });
-    db.version(DB_VER).stores(schema);
-    await db.open();
-    _dexie = db;
-    return _dexie;
-  }
-
-  async function writeTable(table, data) {
-    const db = await open();
-    if (!db[table]) { console.warn('[IDB] Unknown table:', table); return; }
-    await db[table].clear();
-    const valid = (data || []).filter(function(r) { return r && r.id; });
-    if (valid.length > 0) await db[table].bulkPut(valid);
-  }
-
-  async function readTable(table) {
-    const db = await open();
-    if (!db[table]) return [];
-    return db[table].toArray();
-  }
-
-  async function migrate() {
-    if (localStorage.getItem('_idb_migrated_v1') === 'true') {
-      console.log('[IDB] Migration already done — skipping');
-      return;
-    }
-    console.log('[IDB] Starting one-time migration from localStorage…');
-    const NS = 'spos_v4_';
-    let count = 0;
-    for (const t of ALL_TABLES) {
-      try {
-        const raw  = localStorage.getItem(NS + t);
-        const rows = raw ? JSON.parse(raw) : [];
-        if (rows.length > 0) {
-          await writeTable(t, rows);
-          count++;
-        }
-      } catch(e) {
-        console.warn('[IDB] Migration skipped for ' + t + ':', e);
-      }
-    }
-    localStorage.setItem('_idb_migrated_v1', 'true');
-    console.log('[IDB] Migration complete — ' + count + ' tables written to IndexedDB');
-  }
-
-  return { open, writeTable, readTable, migrate, isSupported };
-})();
-
-// §v1.1.343: Debug helper — call window._debugStorage() in DevTools to inspect _mem
-window._debugStorage = function() {
-  const keys = Object.keys(DB._mem);
-  console.log('[IDB] _mem tables: ' + keys.length, keys.length ? '| ' + keys.join(', ') : '(none yet)');
-};
 
 // ════ §v1.1.172: One-time migration — add payment-tracking fields to EXPENSES + EXPENSE_ENTRIES ════
 // Runs once at launch. Only touches records missing the new fields (idempotent).
@@ -5000,8 +4868,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.343'; // §v1.1.343: IndexedDB Stage 1 — in-memory cache (_mem), dual-write (IDB+localStorage), safe fallback, fixed empty pages
-// §v1.1.342: Virtual scrolling for Stock Insights tab — _siVsBuildRows/_siVsAppend/_siVsAttach; exports unchanged (use full _siRows)
+const APP_VERSION    = '1.1.342'; // §v1.1.342: Virtual scrolling for Stock Insights tab — _siVsBuildRows/_siVsAppend/_siVsAttach; exports unchanged (use full _siRows)
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
 // §v1.1.296: Stage 4 – End of Day Summary PDF and CSV exports (full content)
@@ -26637,17 +26504,7 @@ const NOTES_PAGE = {
 function noteSave(){ NOTES_PAGE.save(); } // §7 wrapper
 
 // ── BOOT ──
-// §v1.1.343-FIX: IDB initialises in background — APP.boot() fires immediately (same as v1.1.342).
-// Background rationale: Firebase auth also calls APP.boot() at ~0.5s. Delaying APP.boot()
-// from DOMContentLoaded caused a destructive double-boot (auth boot at 0.5s → pages render;
-// then watchdog boot at 3s → navigated back to login, clearing all page content).
-// _mem is populated lazily by _get() from localStorage on first access — no blocking needed.
 document.addEventListener('DOMContentLoaded', ()=>{
-  // §v1.1.343: Fire IDB init in background — non-blocking, zero impact on boot timing
-  DB.initIDB().catch(function(e) {
-    console.warn('[IDB] Background init error:', e);
-    window._idbFailed = true;
-  });
   APP.boot();
   // Auto run system test after 2 seconds on first load
   // §v1.1.181: run silently at startup (silent=true → no toast on auto-boot)
