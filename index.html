@@ -4800,7 +4800,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.346'; // §v1.1.346: IndexedDB Stage 4 (final) — removed localStorage writes, COI-SW & SQLite dead code, splash/watchdog boot; IDB is sole store with _mem cache and localStorage read fallback; safety-net migration on every boot; §v1.1.345: IndexedDB Stage 3 — schema v2 indexes, storage monitor
+const APP_VERSION    = '1.1.347'; // §v1.1.347: Stage 1 Security — XSS fixes: escapeHtml covers single quotes; inv.customer+inv.notes in INVS.view; 8 fields in previewPurchaseInvoice; inv/ret customer+reason in return previews; r.reason in RETS table; label+arType in Dashboard widget; i.name in _retsSummaryRows; cents comparison in migrateDebtTotals — §v1.1.346: IndexedDB Stage 4 (final) — removed localStorage writes, COI-SW & SQLite dead code, splash/watchdog boot; IDB is sole store with _mem cache and localStorage read fallback; safety-net migration on every boot; §v1.1.345: IndexedDB Stage 3 — schema v2 indexes, storage monitor
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
 // §v1.1.296: Stage 4 – End of Day Summary PDF and CSV exports (full content)
@@ -4935,11 +4935,12 @@ const REVENUE_NE_CASH  = true;  // §24 Rule 3: Prepaid is liability, not revenu
 // NOTE: Function is defined here but not yet applied (safe-start step).
 function escapeHtml(unsafe) {
   if (unsafe == null) return '';
-  return String(unsafe).replace(/[&<>"]/g, function(m) {
+  return String(unsafe).replace(/[&<>"']/g, function(m) {
     if (m === '&') return '&amp;';
     if (m === '<') return '&lt;';
     if (m === '>') return '&gt;';
     if (m === '"') return '&quot;';
+    if (m === "'") return '&#x27;';
     return m;
   });
 }
@@ -5546,7 +5547,10 @@ const CALC = {
         // Check if totalPaid from events > d.total (proof the total is wrong)
         const {totalPaid}=this.recalcDebtRemaining(d);
         // If total < origTotal, it's a legacy record
-        if(Math.abs(parseFloat(d.total||0)-origTotal)>0.005 || parseFloat(d.total||0)<origTotal-0.005){
+        // §v1.1.347: replaced float 0.005 threshold with exact cents comparison — eliminates 1.005-style drift
+        const _totalCents  = _toCents(d.total||0);
+        const _origCents   = _toCents(origTotal);
+        if(_totalCents !== _origCents){
           DB.update('DEBTS',d.id,{total:origTotal,originalTotal:origTotal});
           fixed++;
         } else {
@@ -8925,7 +8929,7 @@ const DASH = {
         const arType = e.type==='SALE'
           ? DASH._saleLabel(p,false).slice(0,8)                        // §v1.1.209
           : (window.EVENT_LABEL[e.type]!==undefined ? window.EVENT_LABEL[e.type].replace(/:.*/,'').slice(0,8) : e.type.slice(0,10));
-        return`<div class="srow"><span class="badge ${badge}" style="font-size:9px;white-space:nowrap">${arType}</span><span style="font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}</span><span style="font-size:10px;color:var(--muted);flex-shrink:0;margin-right:4px">${fmtLocalTime(e.timestamp)||''}</span></div>`;
+        return`<div class="srow"><span class="badge ${badge}" style="font-size:9px;white-space:nowrap">${escapeHtml(arType)}</span><span style="font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(label)}</span><span style="font-size:10px;color:var(--muted);flex-shrink:0;margin-right:4px">${fmtLocalTime(e.timestamp)||''}</span></div>`;
       }).join('');
       // §v1.1.193-FIX2: Fixed max-height container — prevents layout overflow when many events
       rwEl.innerHTML = `<div style="max-height:280px;overflow-y:auto">${_rows||'<div class="empty" style="padding:20px"><p>لا توجد أحداث</p></div>'}</div>`;
@@ -10567,7 +10571,7 @@ const INVS = {
     // This is the authoritative financial view per CPA standards
     const _retsSummaryRows = hasReturns ? invLinkedRets.map(r=>`
         <div class="ptr" style="color:#dc2626">
-          <span>مرتجع ${r.date||''} — ${(()=>{try{const _ri=JSON.parse(r.items||'[]');return Array.isArray(_ri)?_ri.map(i=>i.name).join('، '):'—';}catch(_){return '—';}})()} </span>
+          <span>مرتجع ${r.date||''} — ${(()=>{try{const _ri=JSON.parse(r.items||'[]');return Array.isArray(_ri)?_ri.map(i=>escapeHtml(i.name||'—')).join('، '):'—';}catch(_){return '—';}})()} </span>
           <span style="font-weight:700">- ${parseFloat(r.amt||0).toFixed(2)} ${s}</span>
         </div>`).join('') : '';
     const fullFinSummaryHtml = `
@@ -10622,7 +10626,7 @@ const INVS = {
           <td>${retItems.map(it=>escapeHtml(it.name)+'×'+it.qty).join('، ')||'—'}</td>
           <td style="color:#dc2626;font-weight:700">${parseFloat(r.amt||0).toFixed(2)} ${s}</td>
           <td>${r.methodLabel||r.method||'—'}</td>
-          <td>${r.reason||'—'}</td>
+          <td>${escapeHtml(r.reason||'—')}</td>
         </tr>`;
       }).join('');
       const netAfterRet = Math.max(0, parseFloat(inv.total||0) - totalRetAmt);
@@ -10659,7 +10663,7 @@ const INVS = {
         </div>
       </div>
       <div class="pdfmeta">
-        <div><strong>العميل:</strong> ${inv.customer}${(()=>{const _cc=inv.custCode||inv.customerCode||(DB.all('CUSTOMERS').find(cx=>cx.name===inv.customer)?.code)||'';return _cc?` <span style="font-size:10px;color:#6b7280;font-family:monospace">(رمز: ${_cc})</span>`:''})()}</div>
+        <div><strong>العميل:</strong> ${escapeHtml(inv.customer)}${(()=>{const _cc=inv.custCode||inv.customerCode||(DB.all('CUSTOMERS').find(cx=>cx.name===inv.customer)?.code)||'';return _cc?` <span style="font-size:10px;color:#6b7280;font-family:monospace">(رمز: ${_cc})</span>`:''})()}</div>
         ${_getCashierLineHtml('meta')}
         <div><strong>طريقة الدفع:</strong> ${inv.payType==='cash'?'نقداً':inv.payType==='credit'?'دين آجل':inv.payType==='partial'?'جزئي':'تحويل'}</div>
         <div><strong>تاريخ الطباعة:</strong> ${todayISO()}</div>
@@ -10680,7 +10684,7 @@ const INVS = {
       ${debtSummaryHtml}
       ${payHistHtml}
       ${invReturnsPdfHtml}
-      ${inv.notes?`<div style="margin-top:12px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:11px"><div style="font-weight:700;color:#0369a1;margin-bottom:4px"><i class="fa-solid fa-note-sticky"></i> ملاحظات الفاتورة</div><div style="color:#1e40af;line-height:1.6;white-space:pre-wrap">${inv.notes}</div></div>`:''}
+      ${inv.notes?`<div style="margin-top:12px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:11px"><div style="font-weight:700;color:#0369a1;margin-bottom:4px"><i class="fa-solid fa-note-sticky"></i> ملاحظات الفاتورة</div><div style="color:#1e40af;line-height:1.6;white-space:pre-wrap">${escapeHtml(inv.notes||'')} </div></div>`:''}
       <div class="pdffot">${pdfCfg.pdfThankYou||pdfCfg.pdfFooter||cfg.footer||'شكراً لتسوقكم معنا!'}</div>
     </div>`;
     applyPdfStyles();
@@ -12113,8 +12117,8 @@ const RETS = {
     <div style="text-align:center;margin-bottom:16px">${logoHtml}<h2><i>🔄</i> معاينة المرتجع</h2>
     <div style="font-size:12px;color:#6b7280">التاريخ: ${new Date().toLocaleDateString('ar-SA')} — الوقت: ${new Date().toLocaleTimeString('ar-SA')}</div></div>
     <div class="row"><span>رقم الفاتورة الأصلية</span><strong>${inv.num||'—'}</strong></div>
-    <div class="row"><span>العميل</span><strong>${inv.customer||'—'}</strong></div>
-    <div class="row"><span>سبب الإرجاع</span><span class="badge">${reason||'—'}</span></div>
+    <div class="row"><span>العميل</span><strong>${escapeHtml(inv.customer||'—')}</strong></div>
+    <div class="row"><span>سبب الإرجاع</span><span class="badge">${escapeHtml(reason||'—')}</span></div>
     <div class="row"><span>طريقة الاسترداد</span><strong>${methLabel}</strong></div>
     <h3 style="margin-top:16px">المنتجات المُرتجعة</h3>
     <table><thead><tr><th>المنتج</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead>
@@ -12159,9 +12163,9 @@ const RETS = {
     <div style="text-align:center;margin-bottom:16px">${logoHtml}<h2>🔄 سند مرتجع</h2>
     <div style="font-size:12px;color:#6b7280">التاريخ: ${ret.date||'—'} | الوقت: ${ret.timestamp?new Date(ret.timestamp).toLocaleTimeString('ar-SA'):'—'}</div></div>
     <div class="row"><span>فاتورة أصلية</span><strong>${ret.inv||'—'}</strong></div>
-    <div class="row"><span>العميل</span><strong>${ret.customer||'—'}</strong></div>
+    <div class="row"><span>العميل</span><strong>${escapeHtml(ret.customer||'—')}</strong></div>
     ${_getCashierLineHtml('row')}
-    <div class="row"><span>سبب الإرجاع</span><strong>${ret.reason||'—'}</strong></div>
+    <div class="row"><span>سبب الإرجاع</span><strong>${escapeHtml(ret.reason||'—')}</strong></div>
     <div class="row"><span>طريقة الاسترداد</span><strong>${ret.methodLabel||ret.method||'—'}</strong></div>
     <h3 style="margin-top:16px">المنتجات المُرتجعة</h3>
     <table><thead><tr><th>المنتج</th><th>الكمية</th><th>سعر البيع</th><th>الإجمالي</th></tr></thead>
@@ -19737,7 +19741,7 @@ const RPTS = {
         <td style="color:var(--red);font-weight:700">−${parseFloat(r.profitImpact||r.amt||0).toFixed(2)} ${s}</td>
         <td><span class="badge ${r.method==='cash'?'bem':r.method==='credit'?'bbl':r.method==='debt_reduction'?'bvl':'bmu'}">${r.method==='cash'?'نقدي':r.method==='credit'?'رصيد':r.method==='debt_reduction'?'تخفيض دين':r.methodLabel||r.method||'—'}</span></td>
         <td style="font-size:10.5px">${r.cashier||'—'}</td>
-        <td>${r.reason||'—'}</td>
+        <td>${escapeHtml(r.reason||'—')}</td>
         <td><span class="badge ${r.status==='مكتمل'?'bem':'bgo'}">${r.status}</span></td>
       </tr>`;
     }).join('')||'<tr><td colspan="12" style="text-align:center;padding:30px;color:var(--muted)">لا توجد مرتجعات</td></tr>';
@@ -21764,7 +21768,7 @@ function previewPurchaseInvoice(invoiceId) {
     itemsHtml = `
       <div style="background:#f8faff;border:1px solid #dbe4ff;border-radius:8px;padding:14px;margin-bottom:14px">
         <div style="font-weight:700;color:#3b82f6;margin-bottom:6px">الوصف العام</div>
-        <div style="white-space:pre-wrap;color:#374151">${invoice.generalDescription||'—'}</div>
+        <div style="white-space:pre-wrap;color:#374151">${escapeHtml(invoice.generalDescription||'—')}</div>
         <div style="margin-top:10px;font-weight:700;font-size:15px">المبلغ الإجمالي: <span style="color:#3b82f6">${parseFloat(invoice.quickTotal||total).toFixed(2)} ${curr}</span></div>
       </div>`;
   } else {
@@ -21773,7 +21777,7 @@ function previewPurchaseInvoice(invoiceId) {
     if(items.length) {
       const itemRows = items.map(it=>`
         <tr style="border-bottom:1px solid #e5e7eb">
-          <td style="padding:8px 10px">${it.productName||it.name||'—'}${it.isManual?'<span style="font-size:10px;color:#8b5cf6;margin-right:4px">(يدوي)</span>':''}</td>
+          <td style="padding:8px 10px">${escapeHtml(it.productName||it.name||'—')}${it.isManual?'<span style="font-size:10px;color:#8b5cf6;margin-right:4px">(يدوي)</span>':''}</td>
           <td style="padding:8px 10px;text-align:center">${it.quantity||0}</td>
           <td style="padding:8px 10px;text-align:right">${parseFloat(it.price||0).toFixed(2)} ${curr}</td>
           <td style="padding:8px 10px;text-align:right;font-weight:700">${parseFloat(it.total||0).toFixed(2)} ${curr}</td>
@@ -21809,8 +21813,8 @@ function previewPurchaseInvoice(invoiceId) {
         <td style="padding:7px 10px">${p.date||'—'}</td>
         <td style="padding:7px 10px;font-weight:700;color:#10b981">${parseFloat(p.amount||0).toFixed(2)} ${curr}</td>
         <td style="padding:7px 10px">${p.method||'—'}</td>
-        <td style="padding:7px 10px;font-size:11px;color:#6b7280">${p.reference||'—'}</td>
-        <td style="padding:7px 10px;font-size:11px;color:#6b7280">${p.notes||'—'}</td>
+        <td style="padding:7px 10px;font-size:11px;color:#6b7280">${escapeHtml(p.reference||'—')}</td>
+        <td style="padding:7px 10px;font-size:11px;color:#6b7280">${escapeHtml(p.notes||'—')}</td>
       </tr>`).join('');
     payHistHtml = `
       <div style="margin-bottom:14px">
@@ -21871,10 +21875,10 @@ function previewPurchaseInvoice(invoiceId) {
         <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:14px">
           <div style="font-weight:700;color:#f59e0b;margin-bottom:8px;font-size:12px;text-transform:uppercase;letter-spacing:0.5px">بيانات المورد</div>
           <table style="width:100%;font-size:12px">
-            <tr><td style="color:#6b7280;padding:2px 0">الاسم:</td><td style="font-weight:700">${supplier?.name||'—'}</td></tr>
+            <tr><td style="color:#6b7280;padding:2px 0">الاسم:</td><td style="font-weight:700">${escapeHtml(supplier?.name||'—')}</td></tr>
             <tr><td style="color:#6b7280;padding:2px 0">الرمز:</td><td>${supplier?.code||supplier?.sid||'—'}</td></tr>
-            <tr><td style="color:#6b7280;padding:2px 0">الهاتف:</td><td>${supplier?.phone||'—'}</td></tr>
-            <tr><td style="color:#6b7280;padding:2px 0">البريد:</td><td style="font-size:11px">${supplier?.email||'—'}</td></tr>
+            <tr><td style="color:#6b7280;padding:2px 0">الهاتف:</td><td>${escapeHtml(supplier?.phone||'—')}</td></tr>
+            <tr><td style="color:#6b7280;padding:2px 0">البريد:</td><td style="font-size:11px">${escapeHtml(supplier?.email||'—')}</td></tr>
           </table>
         </div>
       </div>
@@ -21905,7 +21909,7 @@ function previewPurchaseInvoice(invoiceId) {
       <!-- Notes -->
       <div style="background:#fafafa;border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:8px">
         <div style="font-weight:700;color:#374151;margin-bottom:4px;font-size:12px">ملاحظات</div>
-        <div style="color:#6b7280;white-space:pre-wrap;font-size:12px">${invoice.notes}</div>
+        <div style="color:#6b7280;white-space:pre-wrap;font-size:12px">${escapeHtml(invoice.notes||'')} </div>
       </div>` : ''}
 
       <!-- Footer -->
@@ -25097,7 +25101,7 @@ const CUST_PAGE = {
     // Build unified timeline
     const timeline = [];
     custInvs.forEach(i=>{ timeline.push({ date:i.date, type:'sale', icon:'fa-file-invoice-dollar', color:'var(--green)', label:`فاتورة ${i.num}`, amt:parseFloat(i.total||0), note:`${i.payType==='cash'?'نقدي':i.payType==='credit'?'دين':'جزئي'} | الكاشير: ${i.cashier||'—'}` }); });
-    custRets.forEach(r=>{ timeline.push({ date:r.date, type:'return', icon:'fa-rotate-left', color:'var(--red)', label:`مرتجع — ${r.inv||'—'}`, amt:-parseFloat(r.amt||0), note:`${r.reason||'—'} | ${r.methodLabel||r.method||'—'}` }); });
+    custRets.forEach(r=>{ timeline.push({ date:r.date, type:'return', icon:'fa-rotate-left', color:'var(--red)', label:`مرتجع — ${r.inv||'—'}`, amt:-parseFloat(r.amt||0), note:`${escapeHtml(r.reason||'—')} | ${escapeHtml(r.methodLabel||r.method||'—')}` }); });
     custCredits.forEach(cc=>{ timeline.push({ date:cc.date, type:'credit', icon:'fa-credit-card', color:'var(--blue)', label:cc.type==='credit_added'?'رصيد دائن مُضاف':'رصيد دائن مُستخدم', amt:cc.type==='credit_added'?parseFloat(cc.amt||0):-parseFloat(cc.amt||0), note:cc.note||'—' }); });
     custPayEvts.forEach(e=>{ let p={}; try{p=JSON.parse(e.payload||'{}');}catch(_){} timeline.push({ date:fmtLocalDate(e.timestamp||''), type:'payment', icon:'fa-coins', color:'var(--blue)', label:`دفعة على ${p.invNum||'—'}`, amt:parseFloat(p.amt||0), note:`المتبقي بعد الدفعة: ${parseFloat(p.newRemain||0).toFixed(2)} ${s}` }); });
     // §v1.1.46: Add DEBT_DISCOUNT events to timeline — reuse pre-fetched _evts
@@ -25136,10 +25140,10 @@ const CUST_PAGE = {
               </div>
               <div style="flex:1">
                 <div style="display:flex;justify-content:space-between;align-items:center">
-                  <span style="font-size:12px;font-weight:700;color:${t.color}">${t.label}</span>
+                  <span style="font-size:12px;font-weight:700;color:${t.color}">${escapeHtml(t.label||'')} </span>
                   <span style="font-size:13px;font-weight:800;color:${t.amt>=0?'var(--green)':'var(--red)'}">${t.amt>=0?'+':''}${t.amt.toFixed(2)} ${s}</span>
                 </div>
-                <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${t.date} · ${t.note}</div>
+                <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${t.date} · ${escapeHtml(t.note||'')} </div>
               </div>
             </div>`).join('')
           : '<div style="text-align:center;padding:24px;color:var(--muted)">لا توجد معاملات</div>'}
