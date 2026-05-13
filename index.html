@@ -384,11 +384,13 @@ function loginScreenRestore(){
 }
 </script>
 <script>
-// §22-FIX-ERUDA: Dev-only console — loads only for hamzaeldibo@gmail.com or ?dev=1
-(function(){
-  var DEV_EMAIL = 'hamzaeldibo@gmail.com';
-  var urlDev = (window.location.search.indexOf('dev=1') !== -1);
+// §v1.1.350: ADMIN_EMAIL — single source of truth for all admin/dev checks
+// Defined here (first <script> tag) so it is globally available to all later code.
+const ADMIN_EMAIL = 'hamzaeldibo@gmail.com';
 
+// §22-FIX-ERUDA: Dev-only console — loads only for ADMIN_EMAIL (post-login check)
+// §v1.1.350: removed ?dev=1 pre-login backdoor — Eruda now requires authenticated admin session
+(function(){
   function _positionEruda(){
     var entry = document.querySelector('#eruda .eruda-entry-btn');
     if(entry){ entry.style.left='16px'; entry.style.bottom='16px'; entry.style.right='auto'; entry.style.top='auto'; }
@@ -408,10 +410,7 @@ function loginScreenRestore(){
     document.head.appendChild(s);
   }
 
-  // Immediate load if ?dev=1 in URL (works before login)
-  if(urlDev){ _loadEruda(); return; }
-
-  // Otherwise: wait for Firebase Auth, then check email
+  // Wait for Firebase Auth, then check email — no URL bypass allowed
   var _attempts = 0;
   var _poll = setInterval(function(){
     _attempts++;
@@ -419,7 +418,7 @@ function loginScreenRestore(){
     if(!window._fbAuth) return;
     clearInterval(_poll);
     window._fbAuth.onAuthStateChanged(function(user){
-      if(user && user.email === DEV_EMAIL){ _loadEruda(); }
+      if(user && user.email === ADMIN_EMAIL){ _loadEruda(); }
       else if(window._erudaLoaded){
         // If wrong user signs in after load, hide the button
         var btn = document.querySelector('#eruda .eruda-entry-btn');
@@ -642,6 +641,11 @@ function loginScreenRestore(){
         <div id="liveClockTime" style="color:var(--blue)"></div>
       </div>
       <span class="ctag" id="currTag">USD $</span>
+      <!-- §v1.1.352: Quick cloud-refresh button — pulls latest cloud snapshot on demand -->
+      <button class="btn bgh bic bsm" id="quickCloudRefreshBtn" onclick="FIRESTORE_BACKUP._quickRefresh()" title="تحديث من السحابة — سحب أحدث نسخة وإعادة التحميل" style="position:relative">
+        <i class="fa-solid fa-cloud-arrow-down"></i>
+        <span id="quickCloudRefreshDot" style="display:none;position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;background:#10b981;box-shadow:0 0 5px #10b981"></span>
+      </button>
       <button class="btn bgh bic bsm" onclick="refreshAll()" title="تحديث البيانات"><i class="fa-solid fa-arrows-rotate"></i></button>
       <button class="btn bgh bic bsm"><i class="fa-solid fa-bell"></i></button>
     </div>
@@ -1379,7 +1383,7 @@ function loginScreenRestore(){
         <div style="font-size:12px;color:#fca5a5;margin-bottom:8px">⚠️ توقفت المزامنة التلقائية بسبب أخطاء متكررة. بياناتك غير محفوظة في السحابة.</div>
         <button onclick="FIRESTORE_BACKUP.manualSyncFromBanner()" style="width:100%;padding:9px;background:linear-gradient(135deg,#dc2626,#b91c1c);border:none;border-radius:7px;color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer"><i class="fa-solid fa-cloud-arrow-up" style="margin-left:5px"></i>مزامنة يدوياً الآن</button>
       </div>
-      <div class="srow"><span class="slbl">المزامنة التلقائية</span><span style="font-size:11px;color:var(--muted)">كل 30 ثانية من آخر تعديل</span></div>
+      <div class="srow"><span class="slbl">المزامنة التلقائية</span><span style="font-size:11px;color:var(--muted)">كل 4 ثوانٍ من آخر تعديل — شبه فوري</span></div>
       <div class="srow"><span class="slbl">رفع فوري</span><button class="btn bsm" onclick="FIRESTORE_BACKUP.push()" style="background:linear-gradient(135deg,#0891b2,#0e7490);color:#fff;border:none" title="مزامنة فورية بغض النظر عن المزامنة التلقائية"><i class="fa-solid fa-cloud-arrow-up"></i>مزامنة الآن</button></div>
       <!-- §v1.1.289: إيقاف المزامنة التلقائية — يوقف التايمر ويمنع schedulePush من إعادة التشغيل -->
       <div class="srow"><span class="slbl" style="font-size:12px;color:var(--muted)">إيقاف المزامنة التلقائية</span><button class="btn bsm" onclick="FIRESTORE_BACKUP.forceStopSync()" style="background:linear-gradient(135deg,#4b5563,#374151);color:#fff;border:none" title="أوقف المزامنة التلقائية — يمكن إعادة تفعيلها"><i class="fa-solid fa-stop"></i>إيقاف</button></div>
@@ -3723,7 +3727,7 @@ const DB = (function(){
         if(!ok){ window._idbFailed=true; console.warn('[IDB] Not supported — using localStorage only'); return; }
 
         await window.IDB_ENGINE.open();
-        console.log('[IDB] DB opened (schema v2)');
+        if (window.DEV_MODE) console.log('[IDB] DB opened (schema v2)');
 
         // One-time migration from localStorage → IndexedDB
         await window.IDB_ENGINE.migrate();
@@ -3744,7 +3748,7 @@ const DB = (function(){
                 if(Array.isArray(lsRows) && lsRows.length > 0){
                   await window.IDB_ENGINE.writeTable(t, lsRows);
                   rescued++;
-                  console.log('[IDB] Safety-net rescued:', t, lsRows.length, 'rows');
+                  if (window.DEV_MODE) console.log('[IDB] Safety-net rescued:', t, lsRows.length, 'rows');
                 }
               }
               localStorage.removeItem(NS+t); // remove legacy key either way
@@ -3761,7 +3765,7 @@ const DB = (function(){
           }catch(e){ console.warn('[IDB] readTable failed:', t, e); }
         }
         window.IDB_ENGINE._ready = true;
-        console.log('[IDB] Stage 4 ready. _mem tables:', Object.keys(_mem).length);
+        if (window.DEV_MODE) console.log('[IDB] Stage 4 ready. _mem tables:', Object.keys(_mem).length);
       }catch(e){
         window._idbFailed = true;
         console.warn('[IDB] initIDB failed — falling back to localStorage reads:', e);
@@ -3823,7 +3827,7 @@ window.IDB_ENGINE = (function(){
 
   async function migrate(){
     if(localStorage.getItem(MIGRATE_FLAG)) return; // already done
-    console.log('[IDB] Running one-time migration from localStorage…');
+    if (window.DEV_MODE) console.log('[IDB] Running one-time migration from localStorage…');
     for(const t of ALL_TABLES){
       try{
         const raw = localStorage.getItem(NS+t);
@@ -3834,7 +3838,7 @@ window.IDB_ENGINE = (function(){
       }catch(e){ console.warn('[IDB] migrate error for', t, e); }
     }
     localStorage.setItem(MIGRATE_FLAG, '1');
-    console.log('[IDB] Migration complete');
+    if (window.DEV_MODE) console.log('[IDB] Migration complete');
   }
 
   async function isSupported(){
@@ -3888,13 +3892,13 @@ function _migrateExpensesPaymentFields() {
     });
     if (needsWrite) {
       DB.importTable(table, updated, 'replace');
-      console.log('[v1.1.172] Migration: ' + table + ' — updated ' + rows.filter(function(r){ return r.total_due_cents === undefined || r.amount_paid_cents === undefined || r.remaining_cents === undefined || r.payment_method === undefined; }).length + ' records');
+      if (window.DEV_MODE) console.log('[v1.1.172] Migration: ' + table + ' — updated ' + rows.filter(function(r){ return r.total_due_cents === undefined || r.amount_paid_cents === undefined || r.remaining_cents === undefined || r.payment_method === undefined; }).length + ' records');
     }
   });
   if (migratedCount === 0) {
-    console.log('[v1.1.172] Migration: all EXPENSES + EXPENSE_ENTRIES records already up-to-date');
+    if (window.DEV_MODE) console.log('[v1.1.172] Migration: all EXPENSES + EXPENSE_ENTRIES records already up-to-date');
   } else {
-    console.log('[v1.1.172] Migration complete — ' + migratedCount + ' records backfilled');
+    if (window.DEV_MODE) console.log('[v1.1.172] Migration complete — ' + migratedCount + ' records backfilled');
   }
 }
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3931,7 +3935,7 @@ const LEDGER_HASH = (function(){
 
   // Get last known hash from ledger
   function getLastHash(){
-    const all = (function(){try{return JSON.parse(localStorage.getItem('spos_v4_OPS_LOG')||'[]');}catch(_){return [];}})();
+    const all = DB.all('OPS_LOG'); // §v1.1.350: use DB interface
     if(!all.length) return 'GENESIS';
     // Find the most recent event with a hash
     for(let i=all.length-1;i>=0;i--){
@@ -3968,9 +3972,7 @@ const LEDGER_HASH = (function(){
 
   // Verify all SHA-256 hashes asynchronously (§4 — full cryptographic scan)
   async function verifySHA256Integrity(){
-    let all;
-    try{ all = JSON.parse(localStorage.getItem('spos_v4_OPS_LOG')||'[]'); }
-    catch(_){ return {ok:false,error:'Cannot parse ledger'}; }
+    const all = DB.all('OPS_LOG'); // §v1.1.350: use DB interface
     let errors=[];
     for(let i=0;i<all.length;i++){
       const evt = all[i];
@@ -3992,9 +3994,7 @@ const LEDGER_HASH = (function(){
 
   // VerifyLedgerIntegrity — §25 Rule 4
   function verifyIntegrity(){
-    let all;
-    try{ all = JSON.parse(localStorage.getItem('spos_v4_OPS_LOG')||'[]'); }
-    catch(_){ return {ok:false,status:'CORRUPTED',error:'Cannot parse ledger',failIndex:-1}; }
+    const all = DB.all('OPS_LOG'); // §v1.1.350: use DB interface
     if(!all.length) return {ok:true,status:'VALID',events:0,hashed:0};
 
     let prevHash = 'GENESIS';
@@ -4031,9 +4031,7 @@ const LEDGER_HASH = (function(){
 
   // Verify a single branch (§26 Rule 1)
   function verifyBranch(eventTypes){
-    let all;
-    try{ all = JSON.parse(localStorage.getItem('spos_v4_OPS_LOG')||'[]'); }
-    catch(_){ return {ok:false,error:'Cannot parse ledger'}; }
+    const all = DB.all('OPS_LOG'); // §v1.1.350: use DB interface
     const branch = all.filter(e=>eventTypes.includes(e.type));
     let prevHash = 'GENESIS_'+eventTypes[0];
     let hashedCount = 0;
@@ -4058,7 +4056,7 @@ const LEDGER_HASH = (function(){
   // To add digital signature: sign(currentHash) → store as evt.signature
   // To add blockchain anchor: POST currentHash to anchor service every N events
   function exportHashAnchor(){
-    const all=JSON.parse(localStorage.getItem('spos_v4_OPS_LOG')||'[]');
+    const all = DB.all('OPS_LOG'); // §v1.1.350: use DB interface
     const last=all.filter(e=>e.currentHash).pop();
     return last ? {
       anchorHash: last.currentHash,
@@ -4073,9 +4071,8 @@ const LEDGER_HASH = (function(){
     // §v1.1.110: rebuildChain — re-links prevHash/currentHash for all events after cross-device restore.
     // Safe: only recalculates hash pointers; does NOT delete, reorder, or alter any event data.
     rebuildChain(){
-      let all;
-      try{ all = JSON.parse(localStorage.getItem('spos_v4_OPS_LOG')||'[]'); }
-      catch(_){ return {ok:false, error:'Cannot parse OPS_LOG'}; }
+      // §v1.1.349: use DB interface (_mem → IDB) instead of raw localStorage
+      const all = DB.all('OPS_LOG').slice(); // slice() so we mutate a copy, not _mem directly
       if(!all.length) return {ok:true, rebuilt:0};
       // Sort chronologically — restore/merge can leave events out of order
       all.sort((a,b)=>(a.timestamp||'').localeCompare(b.timestamp||''));
@@ -4089,7 +4086,7 @@ const LEDGER_HASH = (function(){
         rebuilt++;
       }
       try{
-        localStorage.setItem('spos_v4_OPS_LOG', JSON.stringify(all));
+        DB.importTable('OPS_LOG', all, 'replace'); // sync _mem + async IDB write
         return {ok:true, rebuilt};
       } catch(e){
         return {ok:false, error:'Failed to save: '+e.message};
@@ -4217,10 +4214,39 @@ const EVENTS = (function(){
 'use strict';
 const AUTH = (function(){
   const SESSION_KEY = 'spos_session_v4';
-  function _hash(str){
+  // §v1.1.348: legacy Java-style hash — kept ONLY for verifying old stored hashes
+  function _legacyHash(str){
     let h = 0;
     for(let i = 0; i < str.length; i++){ h = Math.imul(31, h) + str.charCodeAt(i) | 0; }
     return 'h_' + Math.abs(h).toString(16) + '_' + str.length;
+  }
+  // §v1.1.348: salted SHA-256 via Web Crypto — returns "sha256$<saltHex>$<hashHex>"
+  async function _hashPassword(password){
+    if(!crypto || !crypto.subtle){ TOAST.err('Web Crypto غير مدعوم في هذا المتصفح'); throw new Error('Web Crypto unavailable'); }
+    const salt    = crypto.getRandomValues(new Uint8Array(16));
+    const enc     = new TextEncoder();
+    const data    = new Uint8Array([...salt, ...enc.encode(password)]);
+    const hashBuf = await crypto.subtle.digest('SHA-256', data);
+    const hashHex = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2,'0')).join('');
+    const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2,'0')).join('');
+    return `sha256$${saltHex}$${hashHex}`;
+  }
+  // §v1.1.348: verify password against stored hash (new sha256$ or legacy h_)
+  async function _verifyPassword(password, storedHash){
+    if(!storedHash) return false;
+    if(!storedHash.startsWith('sha256$')){
+      // Legacy hash — compare with old _legacyHash
+      return _legacyHash(password) === storedHash;
+    }
+    const parts = storedHash.split('$');
+    if(parts.length !== 3) return false;
+    const [, saltHex, hashHex] = parts;
+    const salt    = new Uint8Array(saltHex.match(/.{2}/g).map(b => parseInt(b, 16)));
+    const enc     = new TextEncoder();
+    const data    = new Uint8Array([...salt, ...enc.encode(password)]);
+    const hashBuf = await crypto.subtle.digest('SHA-256', data);
+    const computed = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2,'0')).join('');
+    return computed === hashHex;
   }
   function _session(user){
     const s = { id: user.id, name: user.name, email: user.email, role: user.role, login_at: new Date().toISOString() };
@@ -4228,7 +4254,7 @@ const AUTH = (function(){
     return s;
   }
   return {
-    hash(pw){ return _hash(pw); },
+    async hash(pw){ return await _hashPassword(pw); }, // §v1.1.348: async salted SHA-256
     getSession(){
       try{ return JSON.parse(sessionStorage.getItem(SESSION_KEY)||'null'); }catch(e){ return null; }
     },
@@ -4253,12 +4279,13 @@ const AUTH = (function(){
       }
       return owner;
     },
-    createStaff(username, password, role, ownerName){
+    async createStaff(username, password, role, ownerName){ // §v1.1.348: async for _hashPassword
       const owner = this.getOwner();
       if(!owner) throw new Error('لا يوجد مالك');
       if(DB.findOne('USERS', { username })) throw new Error('اسم المستخدم مستخدم مسبقاً');
+      const hashed = await _hashPassword(password);
       const user = DB.insert('USERS', {
-        username, password_hash: _hash(password),
+        username, password_hash: hashed,
         email: '', name: ownerName || username, role,
         owner_id: owner.id
       });
@@ -4283,12 +4310,22 @@ const AUTH = (function(){
       EVENTS.log('LOGIN', { method: 'google', email: owner.email }, owner.id);
       return s;
     },
-    loginStaff(username, password){
+    async loginStaff(username, password){ // §v1.1.348: async for _verifyPassword + legacy migration
       const user = DB.findOne('USERS', { username });
       if(!user) return null;
       if(user.role === 'OWNER') return null;
-      if(user.password_hash !== _hash(password)) return null;
       if(user.status === 'موقوف') return null;
+      const isValid = await _verifyPassword(password, user.password_hash);
+      if(!isValid) return null;
+      // §v1.1.348: auto-migrate legacy hash to SHA-256 on successful login
+      if(user.password_hash && !user.password_hash.startsWith('sha256$')){
+        try{
+          const newHash = await _hashPassword(password);
+          const _prev = window._dbSuppressSync; window._dbSuppressSync = true;
+          try{ DB.update('USERS', user.id, { password_hash: newHash }); }
+          finally{ window._dbSuppressSync = _prev; }
+        } catch(e){ console.warn('[AUTH] hash migration failed:', e); }
+      }
       // §v1.1.313: last_login is a session-tracking write, not a user-initiated data change
       //            — suppress schedulePush() to prevent spurious auto-sync after login
       const _prev = window._dbSuppressSync; window._dbSuppressSync = true;
@@ -4800,7 +4837,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.347'; // §v1.1.347: Stage 1 Security — XSS fixes: escapeHtml covers single quotes; inv.customer+inv.notes in INVS.view; 8 fields in previewPurchaseInvoice; inv/ret customer+reason in return previews; r.reason in RETS table; label+arType in Dashboard widget; i.name in _retsSummaryRows; cents comparison in migrateDebtTotals — §v1.1.346: IndexedDB Stage 4 (final) — removed localStorage writes, COI-SW & SQLite dead code, splash/watchdog boot; IDB is sole store with _mem cache and localStorage read fallback; safety-net migration on every boot; §v1.1.345: IndexedDB Stage 3 — schema v2 indexes, storage monitor
+const APP_VERSION    = '1.1.353'; // §v1.1.353: Audit fixes — _silentPull rollback snapshot, quickCloudRefreshDot activation, daily OPS_LOG+INVENTORY_MOVEMENTS auto-prune — §v1.1.352: Hybrid real-time sync // §v1.1.350: Stage 4 (final) — removed ?dev=1 backdoor, hoisted global ADMIN_EMAIL (single source of truth, 11 literals replaced), escaped cfg.storeName/address/phone in all PDF templates, wrapped 28 console.log/info behind DEV_MODE, converted EVENTS.getLastHash/verifySHA256Integrity/verifyIntegrity/verifyBranch/exportHashAnchor to DB.all('OPS_LOG') — §v1.1.349: Stage 3 — Fixed EVENTS.rebuildChain() to use DB.all/importTable instead of direct localStorage read/write for OPS_LOG — §v1.1.348: Stage 2 — replaced weak _hash with salted SHA-256 (Web Crypto): _legacyHash kept for migration, _hashPassword + _verifyPassword added; AUTH.hash/createStaff/loginStaff made async; USERS_PAGE.save made async; legacy hashes auto-migrated to SHA-256 on next staff login — §v1.1.347: Stage 1 Security — XSS fixes: escapeHtml covers single quotes; inv.customer+inv.notes in INVS.view; 8 fields in previewPurchaseInvoice; inv/ret customer+reason in return previews; r.reason in RETS table; label+arType in Dashboard widget; i.name in _retsSummaryRows; cents comparison in migrateDebtTotals — §v1.1.346: IndexedDB Stage 4 (final) — removed localStorage writes, COI-SW & SQLite dead code, splash/watchdog boot; IDB is sole store with _mem cache and localStorage read fallback; safety-net migration on every boot; §v1.1.345: IndexedDB Stage 3 — schema v2 indexes, storage monitor
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
 // §v1.1.296: Stage 4 – End of Day Summary PDF and CSV exports (full content)
@@ -8139,7 +8176,7 @@ const APP = {
     const adminNav = document.getElementById('adminNavItem');
     if (adminNav) {
       const fbU = window._fbCurrentUser;
-      adminNav.style.display = (fbU && fbU.email === 'hamzaeldibo@gmail.com') ? '' : 'none';
+      adminNav.style.display = (fbU && fbU.email === ADMIN_EMAIL) ? '' : 'none';
     }
     const sbStore = document.getElementById('sbStore');
     if(sbStore) sbStore.textContent = getCfg().storeName;
@@ -8159,6 +8196,30 @@ const APP = {
     try { _migrateExpensesPaymentFields(); } catch(_migErr) { console.warn('[v1.1.172] Migration error:', _migErr); }
     // §FIX-CRITICAL-2: Sync customers from invoices once at launch (not in render)
     setTimeout(()=>{ try{ CUST_PAGE.syncCustomersFromInvoices(); }catch(_){} }, 500);
+    // §v1.1.353 FIX-3: Daily auto-prune — cap OPS_LOG and INVENTORY_MOVEMENTS to prevent unbounded growth
+    setTimeout(function() {
+      try {
+        const PRUNE_KEY  = '_lastPruneDate';
+        const todayStr   = new Date().toISOString().slice(0,10);
+        const lastPrune  = localStorage.getItem(PRUNE_KEY);
+        if (lastPrune === todayStr) return; // already pruned today
+        const OPS_MAX  = 5000;   // keep latest 5000 OPS_LOG entries
+        const INVT_MAX = 3000;   // keep latest 3000 INVENTORY_MOVEMENTS entries
+        const ops = DB.all('OPS_LOG');
+        if (ops.length > OPS_MAX) {
+          const keep = ops.slice(-OPS_MAX);
+          DB.importTable('OPS_LOG', keep, 'replace');
+          if (window.DEV_MODE) console.log('[PRUNE] OPS_LOG: ' + ops.length + ' → ' + keep.length);
+        }
+        const invt = DB.all('INVENTORY_MOVEMENTS');
+        if (invt.length > INVT_MAX) {
+          const keep2 = invt.slice(-INVT_MAX);
+          DB.importTable('INVENTORY_MOVEMENTS', keep2, 'replace');
+          if (window.DEV_MODE) console.log('[PRUNE] INVENTORY_MOVEMENTS: ' + invt.length + ' → ' + keep2.length);
+        }
+        localStorage.setItem(PRUNE_KEY, todayStr);
+      } catch(pruneErr) { console.warn('[PRUNE] Auto-prune failed:', pruneErr.message); }
+    }, 8000);
     this.goTo('dashboard');
     UI.updateBadges();
     UI.updatePendingBadge();
@@ -8372,7 +8433,7 @@ function initGoogleSignIn(mode){
   // §PHASE-FB-2 guard: Firebase Auth is the active sign-in method.
   // Block old GOOGLE_AUTH/GSI flow entirely — Firebase popup handles everything.
   if (typeof _fbAuth !== 'undefined') {
-    console.info('[FB Guard] initGoogleSignIn blocked — Firebase Auth is active.');
+    if (window.DEV_MODE) console.info('[FB Guard] initGoogleSignIn blocked — Firebase Auth is active.');
     return;
   }
   GOOGLE_AUTH.init(mode);
@@ -8395,6 +8456,7 @@ function finishSetup(){
 function doLogout(){
   if(!confirm('هل تريد تسجيل الخروج؟')) return;
   try{ FINANCIAL_ENGINE.stopBackgroundAudit(); }catch(_){}
+  try{ FIRESTORE_BACKUP.stopRemoteListener(); }catch(_){} // §v1.1.352
   AUTH.logout();
   // §v1.1.266: Hide admin storage monitor immediately on logout
   try{ if(typeof ADMIN_STORAGE !== 'undefined') ADMIN_STORAGE.hide(); }catch(_){}
@@ -10655,7 +10717,7 @@ const INVS = {
 
     document.getElementById('pdfContent').innerHTML=`<div class="pdfbox">
       <div class="pdfhdr">
-        <div>${showStoreHdr?`${logoHtml}<div class="pdfco">${pdfCfg.pdfStoreName||cfg.storeName}</div><div style="font-size:11px;color:#6b7280">${cfg.address||''}</div>${cfg.phone?`<div style="font-size:10px;color:#6b7280">${cfg.phone}</div>`:''}`:'&nbsp;'}</div>
+        <div>${showStoreHdr?`${logoHtml}<div class="pdfco">${escapeHtml(pdfCfg.pdfStoreName||cfg.storeName||'')} </div><div style="font-size:11px;color:#6b7280">${escapeHtml(cfg.address||'')} </div>${cfg.phone?`<div style="font-size:10px;color:#6b7280">${escapeHtml(cfg.phone||'')} </div>`:''}`:'&nbsp;'}</div>
         <div style="text-align:left">
           <div style="font-size:15px;font-weight:800;color:#1a2440">${showInvNum?'فاتورة '+inv.num:''}</div>
           <div style="font-size:11px;color:#6b7280">${inv.date}</div>
@@ -13133,7 +13195,7 @@ const DEBTS = {
     document.getElementById('pdfContent').innerHTML=`
     <div class="pdfbox">
       <div class="pdfhdr">
-        <div>${logoHtml}<div class="pdfco">🏪 ${storeDisplay}</div><div style="font-size:11px;color:#6b7280">${cfg.address||''}</div>${cfg.phone?`<div style="font-size:10px;color:#6b7280">${cfg.phone}</div>`:''}</div>
+        <div>${logoHtml}<div class="pdfco">🏪 ${escapeHtml(storeDisplay||'')} </div><div style="font-size:11px;color:#6b7280">${escapeHtml(cfg.address||'')} </div>${cfg.phone?`<div style="font-size:10px;color:#6b7280">${escapeHtml(cfg.phone||'')} </div>`:''}</div>
         <div style="text-align:left"><div style="font-size:16px;font-weight:800;color:#1a2440">كشف حساب دين</div><div style="font-size:11px;color:#6b7280">تاريخ الطباعة: ${todayISO()}</div></div>
       </div>
       <div class="pdfmeta">
@@ -13626,7 +13688,7 @@ const EXPS = {
     const payMethod = exp.payment_method || exp.payMethod || 'نقدي';
     document.getElementById('pdfContent').innerHTML=`<div class="pdfbox">
       <div class="pdfhdr">
-        <div>${logoHtml}<div class="pdfco">${cfg.storeName}</div><div style="font-size:11px;color:#6b7280">${cfg.address||''}</div></div>
+        <div>${logoHtml}<div class="pdfco">${escapeHtml(cfg.storeName||'')} </div><div style="font-size:11px;color:#6b7280">${escapeHtml(cfg.address||'')} </div></div>
         <div style="text-align:left">
           <div style="font-size:14px;font-weight:800;color:#1a2440">سند صرف مصروف</div>
           <div style="font-size:11px;color:#6b7280">${exp.date}</div>
@@ -13707,7 +13769,7 @@ const EXPS = {
     </tr>`).join('');
     document.getElementById('pdfContent').innerHTML=`<div class="pdfbox">
       <div class="pdfhdr">
-        <div>${logoHtml}<div class="pdfco">${cfg.storeName}</div><div style="font-size:11px;color:#6b7280">${cfg.address||''}</div></div>
+        <div>${logoHtml}<div class="pdfco">${escapeHtml(cfg.storeName||'')} </div><div style="font-size:11px;color:#6b7280">${escapeHtml(cfg.address||'')} </div></div>
         <div style="text-align:left">
           <div style="font-size:14px;font-weight:800;color:#1a2440">دفتر المصاريف</div>
           <div style="font-size:11px;color:#6b7280">تاريخ الإصدار: ${todayISO()}</div>
@@ -13890,7 +13952,7 @@ const EXPS = {
     
     document.getElementById('pdfContent').innerHTML=`<div class="pdfbox">
       <div class="pdfhdr">
-        <div>${logoHtml}<div class="pdfco">${cfg.storeName}</div><div style="font-size:11px;color:#6b7280">${cfg.address||''}</div></div>
+        <div>${logoHtml}<div class="pdfco">${escapeHtml(cfg.storeName||'')} </div><div style="font-size:11px;color:#6b7280">${escapeHtml(cfg.address||'')} </div></div>
         <div style="text-align:left">
           <div style="font-size:14px;font-weight:800;color:#1a2440">📋 تقرير المصاريف الشاملة</div>
           <div style="font-size:11px;color:#6b7280">تاريخ التصدير: ${fmtLocalDateTime(new Date().toISOString())}</div>
@@ -14605,7 +14667,7 @@ const EXPS_FILES = {
     const netRemain    = bal.totalRemain;
     document.getElementById('pdfContent').innerHTML=`<div class="pdfbox">
       <div class="pdfhdr">
-        <div>${logoHtml}<div class="pdfco">${cfg.storeName}</div><div style="font-size:11px;color:#6b7280">${cfg.address||''}</div></div>
+        <div>${logoHtml}<div class="pdfco">${escapeHtml(cfg.storeName||'')} </div><div style="font-size:11px;color:#6b7280">${escapeHtml(cfg.address||'')} </div></div>
         <div style="text-align:left">
           <div style="font-size:14px;font-weight:800;color:#1a2440">${typeLabel[file.type]||'📁'} — ${file.name}</div>
           <div style="font-size:11px;color:#6b7280">كود: ${file.code||'—'} | تاريخ التصدير: ${fmtLocalDateTime(new Date().toISOString())}</div>
@@ -14809,7 +14871,7 @@ tr{page-break-inside:avoid}thead{display:table-header-group}
     const payMethod = entry.payment_method || entry.payMethod || '—';
     document.getElementById('pdfContent').innerHTML=`<div class="pdfbox">
       <div class="pdfhdr">
-        <div>${logoHtml}<div class="pdfco">${cfg.storeName}</div></div>
+        <div>${logoHtml}<div class="pdfco">${escapeHtml(cfg.storeName||'')} </div></div>
         <div style="text-align:left">
           <div style="font-size:14px;font-weight:800;color:#1a2440">${typeLabel[file.type]||'📁'} — ${file.name}</div>
           <div style="font-size:11px;color:#6b7280">${fmtLocalDateTime(entry.timestamp||entry.date)||'—'}</div>
@@ -15989,8 +16051,8 @@ const FINANCIAL_ENGINE = {
 // ─────────────────────────────────────────────────────────────────────────────
 const FIRESTORE_BACKUP = (function() {
   const CHUNK_BYTES    = 850 * 1024;  // 850KB — safely under 1MB Firestore doc limit
-  const DEBOUNCE_MS    = 30000;       // 30s debounce — waits 30s after last mutation
-  const MAX_WAIT_MS    = 300000;      // §v1.1.272: 5 min max-wait — forces sync during sustained bulk entry
+  const DEBOUNCE_MS    = 4000;        // §v1.1.352: 4s debounce (was 30s) — fast push for multi-device sync
+  const MAX_WAIT_MS    = 60000;       // §v1.1.352: 1 min max-wait (was 5 min) — bulk entry safety
   const SCHEMA_VERSION = 1;           // bump if Firestore backup structure changes
   const COLL           = 'backups';
 
@@ -16008,6 +16070,10 @@ const FIRESTORE_BACKUP = (function() {
   let _fallbackNotified = false; // §v1.1.288: shown-once flag for compression-fallback toast (reset at start of each push())
   let _compressionTimedOut = false; // §v1.1.309: set when compression fails both attempts — prevents 'small' badge overwriting 'fallback'
   let _autoSyncEnabled  = true;  // §v1.1.289: controls whether schedulePush() is allowed to queue automatic syncs
+  // §v1.1.352: Remote listener state
+  let _remoteListener  = null;  // onSnapshot unsubscribe handle
+  let _lastRemoteSync  = 0;     // timestamp of the last remote update we saw/handled
+  const _startTime     = Date.now(); // used to ignore the first snapshot on load
 
   // ── internal helpers ──────────────────────────────────────────────────────
   function _uid()  { return window._fbCurrentUser ? window._fbCurrentUser.uid : null; }
@@ -16015,7 +16081,7 @@ const FIRESTORE_BACKUP = (function() {
   function _ready() {
     if (!_uid() || !_db()) return false;
     const email = window._fbCurrentUser ? (window._fbCurrentUser.email || '') : '';
-    return email === 'hamzaeldibo@gmail.com' || !!window._fbLicensePlan;
+    return email === ADMIN_EMAIL || !!window._fbLicensePlan; // §v1.1.350: use global ADMIN_EMAIL
   }
 
   function _chunkify(str) {
@@ -16188,7 +16254,7 @@ const FIRESTORE_BACKUP = (function() {
     _syncing = true;
     _fallbackNotified = false; // §v1.1.288: reset per-session toast flag
     _compressionTimedOut = false; // §v1.1.309: reset per-push compression failure flag
-    console.log('[SYNC] push() started');
+    if (window.DEV_MODE) console.log('[SYNC] push() started');
     _setStatus('fa-rotate fa-spin', 'جارٍ المزامنة...', 'var(--cyan)');
 
     // §v1.1.285: Fix 2 — kill-switch: force-reset _syncing after 134s if push() hangs
@@ -16215,7 +16281,7 @@ const FIRESTORE_BACKUP = (function() {
       // §v1.1.288: Show non-blocking "compressing" indicator so user knows the app is working
       // §v1.1.309: Timeout reduced 44s→14s; one retry attempt before raw-JSON fallback
       _setStatus('fa-gear fa-spin', 'جاري ضغط البيانات...', 'var(--gold2)');
-      console.log('[SYNC] Compressing data (' + (jsonStr.length/1024).toFixed(1) + 'KB)...');
+      if (window.DEV_MODE) console.log('[SYNC] Compressing data (' + (jsonStr.length/1024).toFixed(1) + 'KB)...');
       let payload, isCompressed;
       let _compressAttempt = 0;
       while (_compressAttempt < 2) {
@@ -16224,12 +16290,12 @@ const FIRESTORE_BACKUP = (function() {
           const _cr = await _withTimeout(_compress(jsonStr), 14000); // §v1.1.309: 14s (was 44s) — quicker fallback on hanging mobile WebViews
           payload      = _cr.data;
           isCompressed = _cr.compressed;
-          console.log('[SYNC] Compression done (attempt ' + _compressAttempt + ') — ' + (isCompressed ? 'compressed' : 'raw') + ' ' + (payload.length/1024).toFixed(1) + 'KB');
+          if (window.DEV_MODE) console.log('[SYNC] Compression done (attempt ' + _compressAttempt + ') — ' + (isCompressed ? 'compressed' : 'raw') + ' ' + (payload.length/1024).toFixed(1) + 'KB');
           break; // success — exit retry loop
         } catch(_compErr) {
           console.warn('[SYNC] ⚠️ Compression attempt ' + _compressAttempt + ' timed out:', _compErr.message);
           if (_compressAttempt < 2) {
-            console.log('[SYNC] Retrying compression once...');
+            if (window.DEV_MODE) console.log('[SYNC] Retrying compression once...');
             continue; // try once more
           }
           // Both attempts failed — fall back to raw JSON
@@ -16249,11 +16315,11 @@ const FIRESTORE_BACKUP = (function() {
 
       // Read old chunkCount to delete stale chunks
       // §v1.1.284: _withTimeout also on metaRef.get() — prevents hanging before batch.commit
-      console.log('[SYNC] Getting meta...');
+      if (window.DEV_MODE) console.log('[SYNC] Getting meta...');
       let oldCount = 0;
       try {
         const m = await _withTimeout(metaRef.get(), 15000);
-        console.log('[SYNC] Meta retrieved, exists=' + (m ? m.exists : 'null'));
+        if (window.DEV_MODE) console.log('[SYNC] Meta retrieved, exists=' + (m ? m.exists : 'null'));
         if (m && m.exists) oldCount = m.data().chunkCount || 0;
       } catch(_) { console.warn('[SYNC] metaRef.get() timed out or failed — proceeding without oldCount'); }
 
@@ -16287,9 +16353,9 @@ const FIRESTORE_BACKUP = (function() {
         email:           window._fbCurrentUser.email || ''
       });
 
-      console.log('[SYNC] Committing batch (' + chunks.length + ' chunks)...');
+      if (window.DEV_MODE) console.log('[SYNC] Committing batch (' + chunks.length + ' chunks)...');
       await _withTimeout(batch.commit(), 60000); // §v1.1.284: 60s hard timeout — prevents permanent lock if Firestore freezes
-      console.log('[SYNC] Batch committed successfully');
+      if (window.DEV_MODE) console.log('[SYNC] Batch committed successfully');
 
       _lastPushTime = Date.now(); // §v1.1.272: record successful push time
       _retryCount   = 0;          // §v1.1.284: reset retry counter after success
@@ -16304,7 +16370,7 @@ const FIRESTORE_BACKUP = (function() {
       const pct = isCompressed ? ' · ' + Math.round((1 - payload.length / jsonStr.length) * 100) + '% ضغط' : ' · بدون ضغط';
       _setStatus('fa-cloud-arrow-up', 'مزامنة ' + ts, 'var(--green)');
       if (!opts.silent) TOAST.ok('✓ تمت المزامنة بنجاح'); // §v1.1.289: confirm manual sync to user
-      console.log('[SYNC] push() completed ✓');
+      if (window.DEV_MODE) console.log('[SYNC] push() completed ✓');
 
       // §v1.1.263: Update compression badge — distinguish four states
       // §v1.1.309: _compressionTimedOut guard prevents overwriting 'fallback' with 'small'
@@ -16339,7 +16405,7 @@ const FIRESTORE_BACKUP = (function() {
       // §v1.1.284: Silent auto-sync failure — retry with exponential backoff
       if (opts.silent && _retryCount < MAX_RETRIES) {
         const delay = RETRY_BASE_MS * Math.pow(2, _retryCount);
-        console.log('[SYNC] Retry ' + (_retryCount + 1) + '/' + MAX_RETRIES + ' in ' + (delay/1000).toFixed(1) + 's');
+        if (window.DEV_MODE) console.log('[SYNC] Retry ' + (_retryCount + 1) + '/' + MAX_RETRIES + ' in ' + (delay/1000).toFixed(1) + 's');
         _retryTimer = setTimeout(function() { push({ silent: true }); }, delay);
         _retryCount++;
         // §v1.1.287: Notify user on first silent failure so they know sync is struggling
@@ -16388,7 +16454,7 @@ const FIRESTORE_BACKUP = (function() {
 
     // §v1.1.289: Respect _autoSyncEnabled — user may disable auto-sync via UI button
     if (!_autoSyncEnabled) {
-      console.log('[SYNC] schedulePush blocked — auto-sync is disabled by user');
+      if (window.DEV_MODE) console.log('[SYNC] schedulePush blocked — auto-sync is disabled by user');
       return;
     }
 
@@ -16431,6 +16497,153 @@ const FIRESTORE_BACKUP = (function() {
         if (!_syncing) push({ silent: true }); // §v1.1.284: check _syncing before forcing
         else if (window.DEV_MODE) console.log('[CloudBackup] maxWait: push already running — skipping forced push');
       }, MAX_WAIT_MS);
+    }
+  }
+
+  // ── §v1.1.352: REMOTE LISTENER — detects pushes from other devices ────────
+
+  // _silentPull: pulls latest cloud snapshot and reloads — no confirm dialog.
+  // Used when this device is idle and another device has pushed new data.
+  async function _silentPull() {
+    if (!_uid() || !_db()) return;
+    _setStatus('fa-rotate fa-spin', 'جارٍ مزامنة من جهاز آخر...', 'var(--cyan)');
+    // §v1.1.353 FIX-1: Capture rollback snapshot BEFORE any write — mirrors pull() safety pattern
+    const _rollbackSnap = DB.exportAll();
+    const _rollback = function(reason) {
+      try {
+        Object.keys(_rollbackSnap).forEach(function(t) {
+          if (_rollbackSnap[t]) DB.importTable(t, _rollbackSnap[t], 'replace');
+        });
+        console.warn('[SYNC] _silentPull rolled back:', reason);
+      } catch(rbErr) { console.error('[SYNC] Rollback failed:', rbErr.message); }
+    };
+    try {
+      const metaRef  = _db().collection(COLL).doc(_uid());
+      const meta     = await _withTimeout(metaRef.get(), 15000);
+      if (!meta.exists) return;
+      const { chunkCount } = meta.data();
+      const chunkDocs = await Promise.all(
+        Array.from({ length: chunkCount }, function(_, i) {
+          return metaRef.collection('chunks').doc('chunk_' + i).get();
+        })
+      );
+      const joinedPayload = chunkDocs.map(function(d) { return d.data().data; }).join('');
+      const isCompressed  = chunkDocs[0].data().isCompressed === true;
+      let jsonStr;
+      if (isCompressed) {
+        if (typeof DecompressionStream === 'undefined') throw new Error('المتصفح لا يدعم فك الضغط');
+        jsonStr = await _decompress(joinedPayload);
+      } else {
+        jsonStr = joinedPayload;
+      }
+      const snap = JSON.parse(jsonStr);
+      if (!snap || !snap.tables) throw new Error('بنية بيانات غير صالحة');
+      Object.keys(snap.tables).forEach(function(t) { DB.importTable(t, snap.tables[t], 'replace'); });
+      _setStatus('fa-cloud-arrow-down', 'تمت المزامنة من جهاز آخر ✓', 'var(--green)');
+      TOAST.ok('🔄 تم استلام تحديثات من جهاز آخر — سيُعاد تحميل التطبيق');
+      setTimeout(function() { location.reload(); }, 1500);
+    } catch(err) {
+      _rollback(err.message); // §v1.1.353: restore pre-pull state on any failure
+      console.warn('[SYNC] _silentPull failed:', err.message);
+      _setStatus('fa-triangle-exclamation', 'فشل التحديث من الجهاز الآخر', 'var(--gold)');
+    }
+  }
+
+  // _showRemoteUpdateBanner: shows a top banner when another device pushed and
+  // this device is currently active (user might be mid-entry).
+  function _showRemoteUpdateBanner() {
+    if (document.getElementById('_remoteUpdateBanner')) return; // already showing
+    // §v1.1.353 FIX-2: Activate the green dot on the topbar button
+    const dot = document.getElementById('quickCloudRefreshDot');
+    if (dot) dot.style.display = 'block';
+    const bar = document.createElement('div');
+    bar.id = '_remoteUpdateBanner';
+    bar.style.cssText = [
+      'position:fixed;top:0;left:0;right:0;z-index:19998',
+      'background:linear-gradient(135deg,#0891b2,#0e7490)',
+      'color:#fff;padding:10px 16px',
+      'display:flex;align-items:center;justify-content:space-between;gap:12px',
+      'font-family:Cairo,sans-serif;font-size:13px;direction:rtl',
+      'box-shadow:0 3px 14px rgba(0,0,0,.45);animation:_bannerSlide .3s ease'
+    ].join(';');
+    if (!document.getElementById('_remoteUpdateBannerStyle')) {
+      const st = document.createElement('style');
+      st.id = '_remoteUpdateBannerStyle';
+      st.textContent = '@keyframes _bannerSlide{from{transform:translateY(-100%);opacity:0}to{transform:translateY(0);opacity:1}}';
+      document.head.appendChild(st);
+    }
+    bar.innerHTML =
+      '<span style="display:flex;align-items:center;gap:8px">' +
+        '<i class="fa-solid fa-cloud-arrow-down" style="font-size:16px;animation:bounce 1s infinite"></i>' +
+        '<span>جهاز آخر حدّث البيانات — تحديث متاح</span>' +
+      '</span>' +
+      '<div style="display:flex;gap:8px;flex-shrink:0">' +
+        '<button id="_rbNow"   style="padding:6px 14px;background:#fff;color:#0891b2;border:none;border-radius:7px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer"><i class="fa-solid fa-rotate" style="margin-left:5px"></i>تحديث الآن</button>' +
+        '<button id="_rbLater" style="padding:6px 10px;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:7px;font-family:inherit;font-size:12px;cursor:pointer">لاحقاً</button>' +
+      '</div>';
+    document.body.appendChild(bar);
+    document.getElementById('_rbNow').onclick   = function() {
+      bar.remove();
+      const dot = document.getElementById('quickCloudRefreshDot');
+      if (dot) dot.style.display = 'none';
+      _silentPull();
+    };
+    document.getElementById('_rbLater').onclick = function() { bar.remove(); };
+    // Auto-dismiss after 30s if ignored
+    setTimeout(function() { if (bar.parentNode) bar.remove(); }, 30000);
+  }
+
+  // startRemoteListener: sets up a Firestore onSnapshot on the meta doc.
+  // Called once after login — detects pushes from other devices in real time.
+  function startRemoteListener() {
+    if (!_uid() || !_db()) return;
+    if (_remoteListener) { _remoteListener(); _remoteListener = null; } // clear old
+    const metaRef = _db().collection(COLL).doc(_uid());
+    if (window.DEV_MODE) console.log('[SYNC] 👁 Remote listener started for UID:', _uid());
+    _remoteListener = metaRef.onSnapshot(function(doc) {
+      if (!doc.exists) return;
+      const data = doc.data();
+      if (!data.lastSync) return;
+      const remoteTs = data.lastSync.toMillis ? data.lastSync.toMillis() : 0;
+      if (!remoteTs) return;
+
+      // Ignore if this looks like our own push (within ±12s of our last push)
+      if (_lastPushTime > 0 && Math.abs(remoteTs - _lastPushTime) < 12000) {
+        if (window.DEV_MODE) console.log('[SYNC] onSnapshot: own push — skipping');
+        return;
+      }
+      // Ignore the very first snapshot fired on page load
+      if (_lastRemoteSync === 0 && (Date.now() - _startTime) < 8000) {
+        if (window.DEV_MODE) console.log('[SYNC] onSnapshot: initial load snapshot — ignoring');
+        _lastRemoteSync = remoteTs;
+        return;
+      }
+      // Ignore if we've already handled this exact timestamp
+      if (remoteTs <= _lastRemoteSync) return;
+
+      _lastRemoteSync = remoteTs;
+      if (window.DEV_MODE) console.log('[SYNC] 🔔 Remote update detected:', new Date(remoteTs).toLocaleTimeString('ar'));
+
+      // Decide: idle (auto-pull) or active (show banner)
+      const isIdle = !_timer && !_syncing && (Date.now() - _lastPushTime) > 15000;
+      if (isIdle) {
+        if (window.DEV_MODE) console.log('[SYNC] Device idle — auto-pulling...');
+        _silentPull();
+      } else {
+        if (window.DEV_MODE) console.log('[SYNC] Device active — showing update banner');
+        _showRemoteUpdateBanner();
+      }
+    }, function(err) {
+      console.warn('[SYNC] onSnapshot error:', err.message);
+    });
+  }
+
+  // stopRemoteListener: unsubscribes the onSnapshot — called on logout/reset.
+  function stopRemoteListener() {
+    if (_remoteListener) {
+      _remoteListener();
+      _remoteListener = null;
+      if (window.DEV_MODE) console.log('[SYNC] Remote listener stopped');
     }
   }
 
@@ -16576,10 +16789,12 @@ const FIRESTORE_BACKUP = (function() {
     _setStatus('fa-rotate', 'المزامنة التلقائية مفعّلة', 'var(--green)');
     TOAST.ok('✓ تم تفعيل المزامنة التلقائية — ستبدأ خلال 30 ثانية من آخر تعديل');
     schedulePush(); // queue a sync via the normal 30s debounce path
-    console.log('[SYNC] Auto-sync re-enabled by user');
+    if (window.DEV_MODE) console.log('[SYNC] Auto-sync re-enabled by user');
   }
 
   return { push: push, schedulePush: schedulePush, pull: pull,
+    startRemoteListener: startRemoteListener,   // §v1.1.352
+    stopRemoteListener:  stopRemoteListener,    // §v1.1.352
 
     // §v1.1.264: Exposed for confirmFullReset() — atomic Firestore batch delete
     deleteCloudBackup: deleteCloudBackup,
@@ -16595,6 +16810,26 @@ const FIRESTORE_BACKUP = (function() {
 
     // §v1.1.285: Manual kill-switch — stops a stuck sync immediately
     forceStopSync: forceStopSync,
+
+    // §v1.1.352: Quick cloud-refresh — topbar button, shows confirm then silent-pulls
+    _quickRefresh: async function() {
+      const btn = document.getElementById('quickCloudRefreshBtn');
+      if (btn) { btn.disabled = true; btn.querySelector('i').className = 'fa-solid fa-rotate fa-spin'; }
+      try {
+        if (!_uid() || !_db()) { TOAST.warn('يجب تسجيل الدخول أولاً'); return; }
+        const metaRef = _db().collection(COLL).doc(_uid());
+        const meta = await _withTimeout(metaRef.get(), 10000);
+        if (!meta.exists) { TOAST.warn('لا توجد نسخة سحابية لهذا الحساب'); return; }
+        const { lastSync, appVersion, chunkCount } = meta.data();
+        const syncDate = lastSync ? lastSync.toDate().toLocaleString('ar') : '—';
+        if (!confirm('تحديث من السحابة؟\nآخر نسخة: ' + syncDate + '\n\nسيتم استبدال البيانات المحلية وإعادة تحميل التطبيق.')) return;
+        await _silentPull();
+      } catch(e) {
+        TOAST.err('فشل التحديث: ' + e.message);
+      } finally {
+        if (btn) { btn.disabled = false; btn.querySelector('i').className = 'fa-solid fa-cloud-arrow-down'; }
+      }
+    },
 
     // §v1.1.289: Re-enables automatic sync after it was stopped via forceStopSync()
     enableAutoSync: enableAutoSync,
@@ -16678,7 +16913,7 @@ const FIRESTORE_BACKUP = (function() {
 // Queries entire backups/ collection (one read per user). 24h cache.
 // Email-gated, silent failure, verbose F12 logging. Zero cost for regular users.
 const ADMIN_STORAGE = (function(){
-  var ADMIN_EMAIL   = 'hamzaeldibo@gmail.com';
+  // §v1.1.350: ADMIN_EMAIL removed — uses global constant defined at top of file
   var CACHE_TTL_MS  = 24 * 60 * 60 * 1000;  // 24 hours
   var FREE_TIER_MB  = 1024;
 
@@ -16786,17 +17021,17 @@ const ADMIN_STORAGE = (function(){
     var cache = window._adminStorageCache;
     if(!force && cache && (Date.now()-cache.ts < CACHE_TTL_MS)){
       var ageH=((Date.now()-cache.ts)/3600000).toFixed(1);
-      console.log('[ADMIN_STORAGE] [cache] age:'+ageH+'h/24h. ADMIN_STORAGE.refresh(true) to force.');
+      if (window.DEV_MODE) console.log('[ADMIN_STORAGE] [cache] age:'+ageH+'h/24h. ADMIN_STORAGE.refresh(true) to force.');
       _paint(cache.data, cache.ts); return;
     }
-    console.log('[ADMIN_STORAGE] [fetch] backups/ collection'+(force?' (forced)':'')+'...');
+    if (window.DEV_MODE) console.log('[ADMIN_STORAGE] [fetch] backups/ collection'+(force?' (forced)':'')+'...');
     try{
       var data = await _fetchMetrics();
       window._adminStorageCache = { ts: Date.now(), data: data };
       if(data && data.noBackup){
-        console.log('[ADMIN_STORAGE] [ok] No backups in collection.');
+        if (window.DEV_MODE) console.log('[ADMIN_STORAGE] [ok] No backups in collection.');
       } else if(data){
-        console.log('[ADMIN_STORAGE] [ok] total:'+_fmtMB(data.totalStored)
+        if (window.DEV_MODE) console.log('[ADMIN_STORAGE] [ok] total:'+_fmtMB(data.totalStored)
           +' | users:'+data.userCount
           +' | compressed:'+data.compUsers+'/'+data.userCount
           +' | avgCompr:'+(data.avgComprPct!==null?data.avgComprPct+'%':'n/a'));
@@ -22558,15 +22793,19 @@ const USERS_PAGE = {
     if(id){ const u=DB.all('USERS').find(x=>x.id===id); if(u){ UI.setVal('uName',u.name); UI.setVal('uUname',u.username); UI.setVal('uRole',u.role); UI.setVal('uStat',u.status||'نشط'); } }
     UI.showModal('userModal');
   },
-  save(){
+  async save(){ // §v1.1.348: async for await _hashPassword via AUTH.hash / AUTH.createStaff
     const name=UI.val('uName').trim(), uname=UI.val('uUname').trim(), pass=UI.val('uPass'), pass2=UI.val('uPass2');
     if(!name||!uname){ TOAST.err('الاسم واسم المستخدم إلزاميان'); return; }
     if(pass&&pass!==pass2){ TOAST.err('كلمتا المرور لا تتطابقان'); return; }
     const editId=UI.val('eUserId');
     const s=AUTH.getSession();
-    if(editId){ DB.update('USERS',editId,{name,username:uname,role:UI.val('uRole'),status:UI.val('uStat'),...(pass?{password_hash:AUTH.hash(pass)}:{})}); EVENTS.log('UPDATE_USER',{username:uname},s?.id); }
+    if(editId){
+      const updateObj={name,username:uname,role:UI.val('uRole'),status:UI.val('uStat')};
+      if(pass){ updateObj.password_hash = await AUTH.hash(pass); } // §v1.1.348: await async hash
+      DB.update('USERS',editId,updateObj); EVENTS.log('UPDATE_USER',{username:uname},s?.id);
+    }
     else{
-      try{ AUTH.createStaff(uname,pass,UI.val('uRole'),name); }
+      try{ await AUTH.createStaff(uname,pass,UI.val('uRole'),name); } // §v1.1.348: await async createStaff
       catch(e){ TOAST.err(e.message); return; }
       // Update name manually
       const nu=DB.findOne('USERS',{username:uname});
@@ -22651,7 +22890,7 @@ const BKP_PAGE = {
       var devList  = document.getElementById('devLast5Syncs');
       if (!devPanel || !devList) return;
       var fbU = window._fbCurrentUser;
-      if (!fbU || fbU.email !== 'hamzaeldibo@gmail.com') { devPanel.style.display = 'none'; return; }
+      if (!fbU || fbU.email !== ADMIN_EMAIL) { devPanel.style.display = 'none'; return; } // §v1.1.350
       devPanel.style.display = '';
       var last5 = DB.all('SYNC_LOG')
         .filter(function(r) { return r.dest === 'Firestore'; })
@@ -23019,7 +23258,7 @@ const ADMIN_PAGE = {
   // Users with only a users-doc (no license) appear as pending.
   render() {
     const fbU = window._fbCurrentUser;
-    if (!fbU || fbU.email !== 'hamzaeldibo@gmail.com') { APP.goTo('dashboard'); return; }
+    if (!fbU || fbU.email !== ADMIN_EMAIL) { APP.goTo('dashboard'); return; } // §v1.1.350
     // §v1.1.253 #64: Start periodic session check when admin panel opens
     this._startSessionCheck();
 
@@ -23290,7 +23529,7 @@ const ADMIN_PAGE = {
     if (!this._checkSession()) return; // §v1.1.253 #64: abort if session expired
     const fbU = window._fbCurrentUser;
     if (!fbU) { console.error('[AdminPage] grantLicense: no _fbCurrentUser'); return; }
-    if (fbU.email !== 'hamzaeldibo@gmail.com') { console.error('[AdminPage] grantLicense: not admin, got:', fbU.email); return; }
+    if (fbU.email !== ADMIN_EMAIL) { console.error('[AdminPage] grantLicense: not admin, got:', fbU.email); return; } // §v1.1.350
 
     const plan = prompt('اختر نوع الترخيص:\n  monthly  — شهر واحد\n  yearly   — سنة كاملة\n  trial    — تجريبي 7 أيام', 'monthly');
     if (!plan) { if(window.DEV_MODE) console.log('[AdminPage] grantLicense: cancelled'); return; }
@@ -23381,7 +23620,7 @@ const ADMIN_PAGE = {
     if (!this._checkSession()) return; // §v1.1.253 #64: abort if session expired
     const fbU = window._fbCurrentUser;
     if (!fbU) { console.error('[AdminPage] cancelLicense: no _fbCurrentUser'); return; }
-    if (fbU.email !== 'hamzaeldibo@gmail.com') { console.error('[AdminPage] cancelLicense: not admin'); return; }
+    if (fbU.email !== ADMIN_EMAIL) { console.error('[AdminPage] cancelLicense: not admin'); return; } // §v1.1.350
     if (!confirm('هل أنت متأكد من إيقاف اشتراك ' + email + '؟\n\nملاحظة: سيتم تغيير الحالة إلى "ملغي" وسيفقد المستخدم الوصول.\nلن يتم حذف البيانات ولن يتم رد الأموال تلقائياً.')) return;
 
     const self = this;
@@ -23408,7 +23647,7 @@ const ADMIN_PAGE = {
     if (!this._checkSession()) return; // §v1.1.253 #64: abort if session expired
     const fbU = window._fbCurrentUser;
     if (!fbU) { console.error('[AdminPage] revokeLicense: no _fbCurrentUser'); return; }
-    if (fbU.email !== 'hamzaeldibo@gmail.com') { console.error('[AdminPage] revokeLicense: not admin'); return; }
+    if (fbU.email !== ADMIN_EMAIL) { console.error('[AdminPage] revokeLicense: not admin'); return; } // §v1.1.350
     if (!confirm('هل أنت متأكد من إلغاء ترخيص هذا المستخدم؟\nسيتم حذف الترخيص وإعادة تعيين الخطة إلى pending.')) return;
 
     const self = this;
@@ -23437,7 +23676,7 @@ const ADMIN_PAGE = {
   deleteUser(uid, email) {
     if (!this._checkSession()) return; // §v1.1.253 #64: abort if session expired
     const fbU = window._fbCurrentUser;
-    if (!fbU || fbU.email !== 'hamzaeldibo@gmail.com') { console.error('[AdminPage] deleteUser: not admin'); return; }
+    if (!fbU || fbU.email !== ADMIN_EMAIL) { console.error('[AdminPage] deleteUser: not admin'); return; } // §v1.1.350
     if (fbU.uid === uid) { TOAST.err('لا يمكن حذف حسابك الخاص'); return; }
     if (!confirm('هل أنت متأكد من حذف هذا المستخدم نهائياً؟\n(' + (email||uid) + ')\n\nلا يمكن التراجع عن هذه العملية.')) return;
 
@@ -24034,9 +24273,9 @@ const SETT_PAGE = {
     try{
       const cloudResult = await FIRESTORE_BACKUP.deleteCloudBackup();
       if(cloudResult && cloudResult.existed){
-        console.info('[FULL_RESET] Cloud deleted:', cloudResult.chunksDeleted, 'chunks');
+        if (window.DEV_MODE) console.info('[FULL_RESET] Cloud deleted:', cloudResult.chunksDeleted, 'chunks');
       } else {
-        console.info('[FULL_RESET] No cloud backup existed — proceeding to local wipe');
+        if (window.DEV_MODE) console.info('[FULL_RESET] No cloud backup existed — proceeding to local wipe');
       }
       // §v1.1.265 Fix #2: Badge update immediately after successful cloud delete, BEFORE local wipe
       try{ FIRESTORE_BACKUP._setStatus('fa-cloud-slash', 'لا توجد نسخة سحابية', '#6b7280'); }catch(_){}
@@ -25208,7 +25447,7 @@ const CUST_PAGE = {
       const creditBal = credits.reduce((a,cc)=>a+(cc.type==='credit_added'?parseFloat(cc.amt||0):cc.type==='credit_used'?-parseFloat(cc.amt||0):0),0);
       return `<tr><td>${escapeHtml(cx.code||'—')}</td><td>${escapeHtml(cx.name)}</td><td>${invs.length}</td><td>${totalP.toFixed(2)} ${s}</td><td style="color:${debtBal>0?'#e53e3e':'#222'}">${debtBal.toFixed(2)} ${s}</td><td style="color:${creditBal>0?'#2563eb':'#222'}">${creditBal.toFixed(2)} ${s}</td></tr>`;
     }).join('');
-    const html=`<div class="pdfbox"><div class="pdfhdr"><div><div class="pdfco">🏪 ${cfg.storeName}</div><div style="font-size:11px">سجل الزبائن — ${todayISO()}</div></div></div><table class="pdftbl"><thead><tr><th>الكود</th><th>الاسم</th><th>الفواتير</th><th>المشتريات</th><th>الديون</th><th>رصيد دائن</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    const html=`<div class="pdfbox"><div class="pdfhdr"><div><div class="pdfco">🏪 ${escapeHtml(cfg.storeName||'')} </div><div style="font-size:11px">سجل الزبائن — ${todayISO()}</div></div></div><table class="pdftbl"><thead><tr><th>الكود</th><th>الاسم</th><th>الفواتير</th><th>المشتريات</th><th>الديون</th><th>رصيد دائن</th></tr></thead><tbody>${rows}</tbody></table></div>`;
     document.getElementById('pdfContent').innerHTML=html;
     // §v1.1.108-FIX2: apply PDF page styles for correct multipage printing
     applyPdfStyles();
@@ -26402,8 +26641,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
       }
 
       // §v1.1.60: LICENSE CHECK — verify Firestore license before launching app
-      // Admin email bypasses the check (always allowed)
-      const ADMIN_EMAIL = 'hamzaeldibo@gmail.com';
+      // Admin email bypasses the check (always allowed) — uses global ADMIN_EMAIL (§v1.1.350)
 
       // §v1.1.61: Upsert user document (runs for ALL users including admin)
       _fbDb.collection('users').doc(fbUser.uid).get()
@@ -26581,16 +26819,81 @@ document.addEventListener('DOMContentLoaded', ()=>{
         APP.applySession(s);
         APP.launch();
         if(window.DEV_MODE) console.log('[Firebase Auth] ✓ App launched for:', fbEmail);
-        // §v1.1.316: Intentional login-push — upload any pending local changes accumulated
-        // since last session (e.g. offline edits, previous failed sync).
-        // Fires once per login, 3s after launch so UI is fully ready.
-        // push() already guards: _ready(), _syncing, _hasRealData(), navigator.onLine.
-        setTimeout(function() {
+        // §v1.1.351: Smart login sync — detects new browser/device with empty local DB.
+        // If local DB has real data  → push pending changes (original behaviour).
+        // If local DB is empty       → check Firestore for a cloud backup and offer auto-restore.
+        setTimeout(async function() {
           try {
-            if(window.DEV_MODE) console.log('[SYNC] Login push — uploading pending changes after login');
-            FIRESTORE_BACKUP.push({ silent: true });
+            // Quick check: does local DB have any real user data?
+            const USER_TABLES = ['PRODUCTS','INVOICES','EXPENSES','DEBTS','SUPPLIERS',
+                                  'PURCHASE_INVOICES','CUSTOMERS','CATEGORIES'];
+            const hasLocal = USER_TABLES.some(function(t){
+              try{ return DB.count(t) > 0; }catch(_){ return false; }
+            });
+
+            if (hasLocal) {
+              // Normal case — existing browser/device: push pending local changes
+              if(window.DEV_MODE) console.log('[SYNC] Login push — uploading pending changes after login');
+              FIRESTORE_BACKUP.push({ silent: true });
+            } else {
+              // §v1.1.351: New browser / fresh device detected (empty IndexedDB).
+              // Check if a cloud backup exists for this account.
+              if(window.DEV_MODE) console.log('[SYNC] Empty local DB — checking for cloud backup...');
+              try {
+                const uid = window._fbCurrentUser && window._fbCurrentUser.uid;
+                if (!uid) return;
+                const metaSnap = await window._fbDb.collection('backups').doc(uid).get();
+                if (!metaSnap.exists) {
+                  if(window.DEV_MODE) console.log('[SYNC] No cloud backup found for new browser.');
+                  return;
+                }
+                const meta = metaSnap.data();
+                const syncDate = meta.lastSync ? meta.lastSync.toDate().toLocaleString('ar') : '—';
+                const appVer   = meta.appVersion || '—';
+                const chunks   = meta.chunkCount  || 0;
+
+                // Show "New Browser Detected" restore prompt
+                const ov = document.createElement('div');
+                ov.id = '_newBrowserRestoreOverlay';
+                ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:19999;display:flex;align-items:center;justify-content:center;padding:16px;direction:rtl';
+                ov.innerHTML =
+                  '<div style="background:var(--card,#131c35);border-radius:18px;padding:28px 24px;max-width:400px;width:100%;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.6);border:1px solid rgba(59,130,246,.25)">' +
+                    '<div style="font-size:44px;margin-bottom:12px">🌐</div>' +
+                    '<h3 style="color:var(--txt,#f1f5f9);font-size:17px;margin:0 0 8px;font-weight:800">تم الكشف عن متصفح جديد</h3>' +
+                    '<p style="color:var(--txt2,#94a3b8);font-size:13px;margin-bottom:6px">هذا المتصفح لا يحتوي على بيانات محلية.</p>' +
+                    '<p style="color:var(--txt2,#94a3b8);font-size:12px;margin-bottom:4px">☁️ يوجد نسخة سحابية متاحة:</p>' +
+                    '<p style="color:var(--txt,#f1f5f9);font-size:12px;font-weight:700;margin-bottom:4px">📅 ' + syncDate + '</p>' +
+                    '<p style="color:var(--muted,#64748b);font-size:11px;margin-bottom:18px">إصدار ' + appVer + ' · ' + chunks + ' كتلة</p>' +
+                    '<div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.2);border-radius:10px;padding:10px;margin-bottom:20px;font-size:12px;color:#93c5fd">💡 استعد بياناتك من السحابة لبدء العمل على هذا المتصفح</div>' +
+                    '<div style="display:flex;flex-direction:column;gap:10px">' +
+                      '<button id="_nbrRestore" style="padding:13px;border-radius:10px;border:none;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit"><i class="fa-solid fa-cloud-arrow-down"></i>  استعادة البيانات من السحابة</button>' +
+                      '<button id="_nbrSkip"    style="padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:transparent;color:var(--txt2,#94a3b8);font-size:13px;cursor:pointer;font-family:inherit">تخطي — ابدأ بمتجر فارغ</button>' +
+                    '</div>' +
+                  '</div>';
+                document.body.appendChild(ov);
+
+                document.getElementById('_nbrRestore').onclick = function() {
+                  document.body.removeChild(ov);
+                  try { FIRESTORE_BACKUP.pull(); } catch(e) { TOAST.err('فشلت الاستعادة: ' + e.message); }
+                };
+                document.getElementById('_nbrSkip').onclick = function() {
+                  document.body.removeChild(ov);
+                  if(window.DEV_MODE) console.log('[SYNC] User chose to skip cloud restore on new browser.');
+                };
+
+              } catch(cloudErr) {
+                console.warn('[SYNC] Could not check cloud backup on new browser:', cloudErr.message);
+              }
+            }
           } catch(_) {}
         }, 3000);
+
+        // §v1.1.352: Start real-time remote listener — detects pushes from other devices.
+        // Small delay so the app is fully rendered before the first snapshot fires.
+        setTimeout(function() {
+          try { FIRESTORE_BACKUP.startRemoteListener(); } catch(_) {}
+        }, 5000);
+
       } else {
         console.error('[Firebase Auth] Could not create local session.');
       }
@@ -26705,7 +27008,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
       }
       const fbU = window._fbCurrentUser;
       if (!fbU || fbU.uid !== fbUser.uid) return; // user changed or signed out
-      if (fbU.email === 'hamzaeldibo@gmail.com') return; // admin exempt
+      if (fbU.email === ADMIN_EMAIL) return; // admin exempt — §v1.1.350
 
       if(window.DEV_MODE) console.log('[LicenseWatchdog] Re-checking license for:', fbU.email);
       window._fbDb.collection('licenses').doc(fbU.uid).get()
@@ -26779,7 +27082,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
             btn.disabled = false;
             btn.style.opacity = '';
             if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
-              console.info('[Firebase Auth] Popup closed by user.');
+              if (window.DEV_MODE) console.info('[Firebase Auth] Popup closed by user.');
             } else if (err.code === 'auth/popup-blocked') {
               console.warn('[Firebase Auth] Popup blocked — falling back to redirect.');
               _fbAuth.signInWithRedirect(provider);
