@@ -3554,7 +3554,7 @@ const ADMIN_EMAIL = 'hamzaeldibo@gmail.com';
     <p style="color:var(--muted);text-align:center;padding:20px">جارٍ التحميل…</p>
   </div>
   <div class="mf">
-    <button class="btn bb" onclick="SYSTEM_TEST.run(false);closeModal('sysTestReportModal');setTimeout(()=>SYSTEM_TEST.showReport(),400)">
+    <button class="btn bb" onclick="(async()=>{ await SYSTEM_TEST.run(false); closeModal('sysTestReportModal'); setTimeout(()=>SYSTEM_TEST.showReport(),400); })()">
       <i class="fa-solid fa-rotate-right"></i>إعادة الفحص
     </button>
     <button class="btn bgh" onclick="closeModal('sysTestReportModal')">إغلاق</button>
@@ -4837,7 +4837,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.355'; // §v1.1.355: Fixed 2 system-test red failures — (1) AUTH.hash stable: added asyncCheck helper + await AUTH.hash() since it returns Promise since v1.1.348; (2) Ledger hash chain: moved verifyIntegrity to GROUP-2 (before EVENTS.log), cleaned up TEST_EVENT from OPS_LOG + rebuildChain() after delete, removed duplicate GROUP-5 check — §v1.1.354: Full Reset hardened
+const APP_VERSION    = '1.1.355'; // §v1.1.355: Fixed 2 system-test red failures — (1) AUTH.hash stable: added asyncCheck helper + await AUTH.hash(); (2) Ledger hash chain: moved verifyIntegrity to GROUP-2 before EVENTS.log, cleanup TEST_EVENT + rebuildChain(); FIX2: CRITICAL — run() was sync with await inside → SyntaxError blocked entire script (login button dead) → run() now async, all callers updated
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
 // §v1.1.296: Stage 4 – End of Day Summary PDF and CSV exports (full content)
@@ -24489,10 +24489,11 @@ function _scheduleAutoSystemTest(){
   if(now - _lastAutoTestTime < THROTTLE_MS) return; // too soon
   _lastAutoTestTime = now;
   // §v1.1.181: prefer idle callback (avoids UI jank); fall back to setTimeout
-  const _runBg = function(){
+  // §v1.1.355-FIX2: run() is now async — use async _runBg
+  const _runBg = async function(){
     try{
       if(typeof SYSTEM_TEST === 'undefined' || typeof SYSTEM_TEST.run !== 'function') return;
-      const result = SYSTEM_TEST.run(true); // silent=true — no toasts
+      const result = await SYSTEM_TEST.run(true); // silent=true — no toasts
       if(!result) return;
       const { passed, failed, log } = result;
       if(failed === 0){
@@ -24834,7 +24835,8 @@ const SYSTEM_TEST = {
   // ── Main runner ──
   // silent=true → no TOAST messages (background / boot mode)
   // silent=false (default) → shows toast summary + triggers report modal
-  run(silent){
+  // §v1.1.355-FIX2: run() is now async because asyncCheck uses await (AUTH.hash is async since v1.1.348)
+  async run(silent){
     const isSilent = (silent === true);
     const startAll = Date.now();
     let passed=0, failed=0;
@@ -25127,13 +25129,13 @@ const SYSTEM_TEST = {
   },
 
   // §v1.1.181: Show detailed report modal
-  showReport(){
+  async showReport(){
     const modal = document.getElementById('sysTestReportModal');
     const body  = document.getElementById('sysTestReportBody');
     if(!modal || !body) return;
 
-    // Run a fresh silent test if no report yet
-    if(!this._lastReport) this.run(true);
+    // Run a fresh silent test if no report yet — await since run() is now async
+    if(!this._lastReport) await this.run(true);
     const rpt = this._lastReport;
     if(!rpt){ body.innerHTML='<p style="color:var(--muted)">لا يوجد تقرير بعد.</p>'; UI.showModal('sysTestReportModal'); return; }
 
@@ -26658,7 +26660,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   APP.boot();
   // Auto run system test silently after 2 seconds
   // §v1.1.181: run silently at startup (silent=true → no toast on auto-boot)
-  setTimeout(()=>{ try{ SYSTEM_TEST.run(true); }catch(e){ /* test skipped silently — non-critical */ } }, 2000);
+  // §v1.1.355-FIX2: run() is now async — wrap in async IIFE
+  setTimeout(()=>{ (async()=>{ try{ await SYSTEM_TEST.run(true); }catch(e){ /* non-critical */ } })(); }, 2000);
 });
 
 
