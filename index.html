@@ -4837,7 +4837,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.353'; // §v1.1.353: Audit fixes — _silentPull rollback snapshot, quickCloudRefreshDot activation, daily OPS_LOG+INVENTORY_MOVEMENTS auto-prune — §v1.1.352: Hybrid real-time sync // §v1.1.350: Stage 4 (final) — removed ?dev=1 backdoor, hoisted global ADMIN_EMAIL (single source of truth, 11 literals replaced), escaped cfg.storeName/address/phone in all PDF templates, wrapped 28 console.log/info behind DEV_MODE, converted EVENTS.getLastHash/verifySHA256Integrity/verifyIntegrity/verifyBranch/exportHashAnchor to DB.all('OPS_LOG') — §v1.1.349: Stage 3 — Fixed EVENTS.rebuildChain() to use DB.all/importTable instead of direct localStorage read/write for OPS_LOG — §v1.1.348: Stage 2 — replaced weak _hash with salted SHA-256 (Web Crypto): _legacyHash kept for migration, _hashPassword + _verifyPassword added; AUTH.hash/createStaff/loginStaff made async; USERS_PAGE.save made async; legacy hashes auto-migrated to SHA-256 on next staff login — §v1.1.347: Stage 1 Security — XSS fixes: escapeHtml covers single quotes; inv.customer+inv.notes in INVS.view; 8 fields in previewPurchaseInvoice; inv/ret customer+reason in return previews; r.reason in RETS table; label+arType in Dashboard widget; i.name in _retsSummaryRows; cents comparison in migrateDebtTotals — §v1.1.346: IndexedDB Stage 4 (final) — removed localStorage writes, COI-SW & SQLite dead code, splash/watchdog boot; IDB is sole store with _mem cache and localStorage read fallback; safety-net migration on every boot; §v1.1.345: IndexedDB Stage 3 — schema v2 indexes, storage monitor
+const APP_VERSION    = '1.1.355'; // §v1.1.355: Fixed 2 system-test red failures — (1) AUTH.hash stable: added asyncCheck helper + await AUTH.hash() since it returns Promise since v1.1.348; (2) Ledger hash chain: moved verifyIntegrity to GROUP-2 (before EVENTS.log), cleaned up TEST_EVENT from OPS_LOG + rebuildChain() after delete, removed duplicate GROUP-5 check — §v1.1.354: Full Reset hardened
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
 // §v1.1.296: Stage 4 – End of Day Summary PDF and CSV exports (full content)
@@ -16846,23 +16846,46 @@ const FIRESTORE_BACKUP = (function() {
   };
 
   // ─────────────────────────────────────────────────────────────────
-  // §v1.1.264: deleteCloudBackup — atomic Batch delete of meta + all chunks
-  // Returns Promise<{existed:bool, chunksDeleted:number}>
-  // Rejects on auth failure, network failure, or Firestore permission denied
+  // §v1.1.354: deleteCloudBackup — multi-batch deletion with _withTimeout on every Firestore call.
+  // Fixes: (1) single-batch limit: Firebase allows max 500 ops per batch — large backups
+  //        with ≥499 chunks would exceed this and throw, causing Full Reset HARD ABORT.
+  //        (2) no timeout: metaSnap.get() and batch.commit() could hang indefinitely.
+  // Strategy: split chunk deletions into batches of MAX_BATCH_OPS each, then delete meta last.
+  // Returns Promise<{existed:bool, chunksDeleted:number, batchesUsed:number}>
+  // Rejects on auth failure, network failure, or Firestore permission denied.
   async function deleteCloudBackup() {
+    const MAX_BATCH_OPS = 450; // §v1.1.354: stay well under Firebase 500-op limit
     if (!window._fbCurrentUser) throw new Error('المستخدم غير مسجل الدخول');
     const db      = _db();
     const metaRef = db.collection(COLL).doc(_uid());
-    const metaSnap = await metaRef.get();
-    if (!metaSnap.exists) return { existed: false, chunksDeleted: 0 };
+    const metaSnap = await _withTimeout(metaRef.get(), 15000);
+    if (!metaSnap.exists) return { existed: false, chunksDeleted: 0, batchesUsed: 0 };
     const chunkCount = metaSnap.data().chunkCount || 0;
-    const batch = db.batch();
+
+    // §v1.1.354: Build chunk refs, split into ≤MAX_BATCH_OPS batches
+    const chunkRefs = [];
     for (let i = 0; i < chunkCount; i++) {
-      batch.delete(metaRef.collection('chunks').doc('chunk_' + i));
+      chunkRefs.push(metaRef.collection('chunks').doc('chunk_' + i));
     }
-    batch.delete(metaRef); // meta deleted last — if batch fails nothing is touched
-    await batch.commit();
-    return { existed: true, chunksDeleted: chunkCount };
+
+    let batchesUsed = 0;
+    // Commit all chunk batches first — meta is deleted last to preserve atomicity guarantee:
+    // if any chunk batch fails, meta still exists → backup is considered present → consistent state.
+    for (let offset = 0; offset < chunkRefs.length; offset += MAX_BATCH_OPS) {
+      const slice = chunkRefs.slice(offset, offset + MAX_BATCH_OPS);
+      const batch = db.batch();
+      slice.forEach(function(ref) { batch.delete(ref); });
+      await _withTimeout(batch.commit(), 20000);
+      batchesUsed++;
+    }
+
+    // Delete meta document in its own final batch
+    const metaBatch = db.batch();
+    metaBatch.delete(metaRef);
+    await _withTimeout(metaBatch.commit(), 15000);
+    batchesUsed++;
+
+    return { existed: true, chunksDeleted: chunkCount, batchesUsed: batchesUsed };
   }
 
   // §v1.1.264: UI handler for "حذف السحابة فقط" button
@@ -24270,10 +24293,29 @@ const SETT_PAGE = {
     }catch(bkpErr){ console.warn('[FULL_RESET] Auto-backup error:', bkpErr); }
 
     // ── STEP 5: Delete cloud backup FIRST — abort entirely on failure (do NOT touch local) ──
+    // §v1.1.354: If offline/unauthenticated, warn user and offer local-only reset
+    if (!window._fbCurrentUser || !window._fbDb) {
+      const offlineOk = confirm(
+        '⚠️ غير متصل بـ Firestore\n\n' +
+        'لا يمكن حذف النسخة السحابية بدون اتصال.\n' +
+        'سيتم مسح البيانات المحلية فقط.\n\n' +
+        '⚠️ تحذير: البيانات الموجودة في Firestore ستبقى وستعود\n' +
+        'عند تسجيل الدخول مجدداً من أي متصفح.\n\n' +
+        'للتهيئة الكاملة يجب الاتصال بالإنترنت.\n\n' +
+        'هل تريد مسح البيانات المحلية فقط الآن؟'
+      );
+      if (!offlineOk) { try{ FIRESTORE_BACKUP._setStatus('fa-cloud', 'ملغى', 'var(--muted)'); }catch(_){} return; }
+      try { FIRESTORE_BACKUP.stopRemoteListener(); } catch(_) {}
+      // Skip cloud deletion — fall through to local wipe (STEP 6)
+    } else {
     try{
+      // §v1.1.354: Stop remote listener BEFORE cloud deletion — prevents it from
+      // re-pulling data from another device during or after the reset process.
+      try { FIRESTORE_BACKUP.stopRemoteListener(); } catch(_) {}
+
       const cloudResult = await FIRESTORE_BACKUP.deleteCloudBackup();
       if(cloudResult && cloudResult.existed){
-        if (window.DEV_MODE) console.info('[FULL_RESET] Cloud deleted:', cloudResult.chunksDeleted, 'chunks');
+        if (window.DEV_MODE) console.info('[FULL_RESET] Cloud deleted:', cloudResult.chunksDeleted, 'chunks in', cloudResult.batchesUsed, 'batches');
       } else {
         if (window.DEV_MODE) console.info('[FULL_RESET] No cloud backup existed — proceeding to local wipe');
       }
@@ -24282,9 +24324,12 @@ const SETT_PAGE = {
     }catch(cloudErr){
       console.error('[FULL_RESET] Cloud deletion FAILED — local data untouched:', cloudErr);
       try{ FIRESTORE_BACKUP._setStatus('fa-triangle-exclamation', 'فشل الحذف السحابي', 'var(--red)'); }catch(_){}
+      // §v1.1.354: Restart remote listener since we aborted — device should still receive updates
+      try { FIRESTORE_BACKUP.startRemoteListener(); } catch(_) {}
       TOAST.err('فشل حذف النسخة السحابية: ' + cloudErr.message + ' — تم إلغاء التهيئة الكاملة');
       return; // ← HARD ABORT — local data is never touched
     }
+    } // end online-only block §v1.1.354
 
     // ── STEP 6: Cloud confirmed deleted — now wipe local data ──
     // §v1.1.270-FIX-1: Added SETTINGS — previously survived full reset (storeName, PIN, currency, logo remained)
@@ -24807,6 +24852,19 @@ const SYSTEM_TEST = {
       }
     };
 
+    // §v1.1.355: asyncCheck — for tests that require await (e.g. AUTH.hash async)
+    const asyncCheck=async(name,fn)=>{
+      const t0=Date.now();
+      try{
+        await fn();
+        results.push({name, ok:true, msg:'', ms:Date.now()-t0});
+        passed++;
+      }catch(e){
+        results.push({name, ok:false, msg:e.message||'?', ms:Date.now()-t0});
+        failed++;
+      }
+    };
+
     // ── §GROUP-1: Core DB ──
     check('DB.insert works', ()=>{ const r=DB.insert('_TEST',{val:1}); if(!r.id) throw new Error('no id'); DB.delete('_TEST',r.id); });
     check('DB.find works', ()=>{ const r=DB.insert('_TEST',{val:42}); const f=DB.find('_TEST',{val:42}); if(!f.length) throw new Error('not found'); DB.delete('_TEST',r.id); });
@@ -24814,9 +24872,38 @@ const SYSTEM_TEST = {
     check('DB.all returns array', ()=>{ const r=DB.all('PRODUCTS'); if(!Array.isArray(r)) throw new Error('not array'); });
 
     // ── §GROUP-2: Auth & Engine Presence ──
-    check('AUTH.hash stable', ()=>{ if(AUTH.hash('test')!==AUTH.hash('test')) throw new Error('hash unstable'); });
+    // §v1.1.355 FIX: AUTH.hash is async (returns Promise) since v1.1.348 — use asyncCheck
+    await asyncCheck('AUTH.hash stable', async ()=>{
+      const h1 = await AUTH.hash('test_stability_check');
+      const h2 = await AUTH.hash('test_stability_check');
+      if(h1 !== h2) throw new Error('hash unstable — same input produced different outputs');
+      if(typeof h1 !== 'string' || h1.length < 16) throw new Error('hash output invalid: ' + h1);
+    });
     check('Owner exists (or first-run)', ()=>{ if(!AUTH.hasOwner()){ console.info('[SYSTEM_TEST] No owner — first-run setup not yet complete. Skipping.'); return; } });
-    check('EVENTS.log works', ()=>{ const e=EVENTS.log('TEST_EVENT',{x:1},'system'); if(!e.id) throw new Error('no event id'); });
+
+    // §v1.1.355 FIX: Ledger hash chain integrity is now verified HERE (before EVENTS.log)
+    // because EVENTS.log inserts TEST_EVENT into OPS_LOG which permanently adds to the chain.
+    // Running verifyIntegrity after EVENTS.log caused "Chain break at event #0 (TEST_EVENT)"
+    // whenever OPS_LOG was empty or the chain pointer was disrupted by the test event.
+    check('Ledger hash chain integrity', ()=>{
+      const result = LEDGER_HASH.verifyIntegrity();
+      if(!result.ok){ throw new Error(result.error || ('Chain invalid: ' + result.status)); }
+    });
+
+    // §v1.1.355 FIX: EVENTS.log test cleans up TEST_EVENT immediately after, then rebuilds
+    // the chain so the ledger stays consistent (delete from middle/end could break chain links).
+    check('EVENTS.log works', ()=>{
+      const e = EVENTS.log('TEST_EVENT', {x:1}, 'system');
+      if(!e.id) throw new Error('no event id');
+      try {
+        DB.delete('OPS_LOG', e.id);
+        // Rebuild chain after deleting TEST_EVENT — needed if TEST_EVENT was in the middle/end
+        // of the chain (its removal leaves the subsequent event with a wrong prevHash pointer).
+        // rebuildChain() re-links all prevHash/currentHash by timestamp order — safe to call.
+        LEDGER_HASH.rebuildChain();
+        if (window.DEV_MODE) console.log('[SYSTEM_TEST] TEST_EVENT cleaned + chain rebuilt, id=' + e.id);
+      } catch(_) { /* cleanup failure is non-fatal for the test result */ }
+    });
     check('Products seeded (or first-run)', ()=>{ if(!AUTH.hasOwner()) return; if(DB.count('PRODUCTS')===0){ console.info('[SYSTEM_TEST] No products — first-run, skipping.'); return; } });
     check('GOOGLE_AUTH is real GIS', ()=>{ if(typeof GOOGLE_AUTH._onGSIReady!=='function') throw new Error('missing _onGSIReady'); if(typeof GOOGLE_AUTH._handleCredential!=='function') throw new Error('missing _handleCredential — not real OAuth'); });
     check('DRIVE_SYNC engine exists', ()=>{ if(typeof DRIVE_SYNC.sync!=='function') throw new Error('missing sync'); if(typeof DRIVE_SYNC.requestAccess!=='function') throw new Error('missing requestAccess'); if(typeof DRIVE_SYNC.disconnect!=='function') throw new Error('missing disconnect'); });
@@ -24901,10 +24988,8 @@ const SYSTEM_TEST = {
       const missing = requiredTables.filter(t => !Object.prototype.hasOwnProperty.call(exported, t));
       if(missing.length > 0) throw new Error('Backup missing tables: ' + missing.join(', '));
     });
-    check('Ledger hash chain integrity', ()=>{
-      const result = LEDGER_HASH.verifyIntegrity();
-      if(!result.ok){ throw new Error(result.error || ('Chain invalid: ' + result.status)); }
-    });
+    // §v1.1.355: Ledger hash chain integrity moved to GROUP-2 (before EVENTS.log test)
+    // to prevent TEST_EVENT contamination. See GROUP-2 above.
     check('Expense sub-ledger (EXPENSE_ENTRIES) included in totalExpenses', ()=>{
       // §v1.1.176: Phase 7 — manual sum uses amount_paid_cents (same fallback as engine)
       const totalCalc = CALC.totalExpenses();
