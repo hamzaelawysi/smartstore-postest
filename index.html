@@ -3997,8 +3997,19 @@ const LEDGER_HASH = (function(){
     const all = DB.all('OPS_LOG'); // §v1.1.350: use DB interface
     if(!all.length) return {ok:true,status:'VALID',events:0,hashed:0};
 
-    let prevHash = 'GENESIS';
+    // §v1.1.355-FIX3: Find the first chained event and seed prevHash from its prevHash.
+    // This handles three legitimate scenarios where chain doesn't start at 'GENESIS':
+    //   (a) OPS_LOG was pruned — first kept event was mid-chain
+    //   (b) App was restored from backup — legacy un-hashed events precede the chain
+    //   (c) BG_AUDIT is the first hashed event and it was logged after earlier un-hashed events
+    // Previous code hardcoded prevHash='GENESIS', causing false "chain break at event #N (BG_AUDIT)"
+    // failures whenever any un-hashed legacy event preceded the chain.
+    const firstChained = all.find(e => e.currentHash);
+    if(!firstChained) return {ok:true,status:'VALID_LEGACY',events:all.length,hashed:0};
+
+    let prevHash    = firstChained.prevHash || 'GENESIS'; // seed from actual chain start
     let hashedCount = 0;
+
     for(let i=0;i<all.length;i++){
       const evt = all[i];
       if(!evt.currentHash) continue; // Pre-chain legacy event, skip
@@ -4837,7 +4848,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.355'; // §v1.1.355: Fixed 2 system-test red failures — (1) AUTH.hash stable: added asyncCheck helper + await AUTH.hash(); (2) Ledger hash chain: moved verifyIntegrity to GROUP-2 before EVENTS.log, cleanup TEST_EVENT + rebuildChain(); FIX2: CRITICAL — run() was sync with await inside → SyntaxError blocked entire script (login button dead) → run() now async, all callers updated
+const APP_VERSION    = '1.1.355'; // §v1.1.355: Fixed 3 system-test failures — (1) AUTH.hash format valid: salted SHA-256 by design, test now validates format+salting not equality; (2) EVENTS.log cleanup: delete TEST_EVENT, no rebuildChain; (3) verifyIntegrity FIX3: seeds prevHash from first chained event (not hardcoded GENESIS) — fixes false chain-break when legacy/un-hashed events precede chain (BG_AUDIT scenario); FIX-CRITICAL: run() async + all callers updated
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
 // §v1.1.296: Stage 4 – End of Day Summary PDF and CSV exports (full content)
