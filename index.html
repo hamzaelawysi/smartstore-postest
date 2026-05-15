@@ -24874,36 +24874,38 @@ const SYSTEM_TEST = {
     check('DB.all returns array', ()=>{ const r=DB.all('PRODUCTS'); if(!Array.isArray(r)) throw new Error('not array'); });
 
     // ── §GROUP-2: Auth & Engine Presence ──
-    // §v1.1.355 FIX: AUTH.hash is async (returns Promise) since v1.1.348 — use asyncCheck
-    await asyncCheck('AUTH.hash stable', async ()=>{
-      const h1 = await AUTH.hash('test_stability_check');
-      const h2 = await AUTH.hash('test_stability_check');
-      if(h1 !== h2) throw new Error('hash unstable — same input produced different outputs');
-      if(typeof h1 !== 'string' || h1.length < 16) throw new Error('hash output invalid: ' + h1);
+    // §v1.1.355: AUTH.hash is a SALTED SHA-256 (since v1.1.348) — each call produces a different
+    // output intentionally (random salt via crypto.getRandomValues). Testing h1===h2 is wrong.
+    // Correct test: verify format and that salting works (h1 !== h2 is EXPECTED behavior).
+    await asyncCheck('AUTH.hash format valid', async ()=>{
+      const h1 = await AUTH.hash('probe_string_123');
+      if(typeof h1 !== 'string')           throw new Error('hash did not return a string');
+      if(!h1.startsWith('sha256$'))        throw new Error('hash format wrong — expected sha256$salt$hash, got: ' + h1.slice(0,30));
+      if(h1.split('$').length !== 3)       throw new Error('hash structure wrong — expected 3 parts, got: ' + h1.split('$').length);
+      const h2 = await AUTH.hash('probe_string_123');
+      if(h1 === h2) throw new Error('salting broken — two calls returned identical output (no random salt)');
+      // h1 !== h2 is the CORRECT behavior for salted hashes
     });
     check('Owner exists (or first-run)', ()=>{ if(!AUTH.hasOwner()){ console.info('[SYSTEM_TEST] No owner — first-run setup not yet complete. Skipping.'); return; } });
 
-    // §v1.1.355 FIX: Ledger hash chain integrity is now verified HERE (before EVENTS.log)
-    // because EVENTS.log inserts TEST_EVENT into OPS_LOG which permanently adds to the chain.
-    // Running verifyIntegrity after EVENTS.log caused "Chain break at event #0 (TEST_EVENT)"
-    // whenever OPS_LOG was empty or the chain pointer was disrupted by the test event.
+    // §v1.1.355: Ledger hash chain integrity — runs BEFORE EVENTS.log to avoid TEST_EVENT pollution.
+    // NOTE: verifyIntegrity uses DB.all() insertion order. rebuildChain() must NEVER be called
+    // from within any test — it would re-sort by timestamp and corrupt subsequent verifications.
     check('Ledger hash chain integrity', ()=>{
       const result = LEDGER_HASH.verifyIntegrity();
       if(!result.ok){ throw new Error(result.error || ('Chain invalid: ' + result.status)); }
     });
 
-    // §v1.1.355 FIX: EVENTS.log test cleans up TEST_EVENT immediately after, then rebuilds
-    // the chain so the ledger stays consistent (delete from middle/end could break chain links).
+    // §v1.1.355 FIX: EVENTS.log test cleans up TEST_EVENT by simple delete — no rebuildChain().
+    // ⚠️  Do NOT call rebuildChain() here: it re-sorts by timestamp and recomputes ALL hashes,
+    //     causing verifyIntegrity() to fail on the next run (insertion-order vs timestamp-order mismatch).
     check('EVENTS.log works', ()=>{
       const e = EVENTS.log('TEST_EVENT', {x:1}, 'system');
       if(!e.id) throw new Error('no event id');
       try {
         DB.delete('OPS_LOG', e.id);
-        // Rebuild chain after deleting TEST_EVENT — needed if TEST_EVENT was in the middle/end
-        // of the chain (its removal leaves the subsequent event with a wrong prevHash pointer).
-        // rebuildChain() re-links all prevHash/currentHash by timestamp order — safe to call.
-        LEDGER_HASH.rebuildChain();
-        if (window.DEV_MODE) console.log('[SYSTEM_TEST] TEST_EVENT cleaned + chain rebuilt, id=' + e.id);
+        // Chain is now restored: TEST_EVENT was the last event, removing it leaves chain intact.
+        if (window.DEV_MODE) console.log('[SYSTEM_TEST] TEST_EVENT cleaned from OPS_LOG, id=' + e.id);
       } catch(_) { /* cleanup failure is non-fatal for the test result */ }
     });
     check('Products seeded (or first-run)', ()=>{ if(!AUTH.hasOwner()) return; if(DB.count('PRODUCTS')===0){ console.info('[SYSTEM_TEST] No products — first-run, skipping.'); return; } });
