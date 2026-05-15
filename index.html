@@ -3993,51 +3993,63 @@ const LEDGER_HASH = (function(){
   }
 
   // VerifyLedgerIntegrity — §25 Rule 4
+  // §v1.1.355-FIX4: Chain-following algorithm — order-independent.
+  // Previous approach iterated DB.all() in insertion order and assumed that matched chain order.
+  // This broke whenever events were reordered (restore, rebuildChain, IndexedDB re-insertion).
+  // New approach: builds a hash-pointer map and WALKS the chain from root to tip,
+  // regardless of the physical storage order in IndexedDB.
+  // Complexity: O(N) time, O(N) space.
   function verifyIntegrity(){
-    const all = DB.all('OPS_LOG'); // §v1.1.350: use DB interface
-    if(!all.length) return {ok:true,status:'VALID',events:0,hashed:0};
+    const all     = DB.all('OPS_LOG'); // §v1.1.350: use DB interface
+    const chained = all.filter(function(e){ return !!e.currentHash; });
+    if(!chained.length) return {ok:true, status:'VALID', events:all.length, hashed:0};
 
-    // §v1.1.355-FIX3: Find the first chained event and seed prevHash from its prevHash.
-    // This handles three legitimate scenarios where chain doesn't start at 'GENESIS':
-    //   (a) OPS_LOG was pruned — first kept event was mid-chain
-    //   (b) App was restored from backup — legacy un-hashed events precede the chain
-    //   (c) BG_AUDIT is the first hashed event and it was logged after earlier un-hashed events
-    // Previous code hardcoded prevHash='GENESIS', causing false "chain break at event #N (BG_AUDIT)"
-    // failures whenever any un-hashed legacy event preceded the chain.
-    const firstChained = all.find(e => e.currentHash);
-    if(!firstChained) return {ok:true,status:'VALID_LEGACY',events:all.length,hashed:0};
+    // Build two lookup maps for O(1) traversal
+    const byCurrentHash = {}; // currentHash → event (to detect orphans & cycles)
+    const byPrevHash    = {}; // prevHash    → event (to walk forward: prev → next)
+    chained.forEach(function(e){
+      byCurrentHash[e.currentHash] = e;
+      byPrevHash[e.prevHash]       = e;
+    });
 
-    let prevHash    = firstChained.prevHash || 'GENESIS'; // seed from actual chain start
-    let hashedCount = 0;
-
-    for(let i=0;i<all.length;i++){
-      const evt = all[i];
-      if(!evt.currentHash) continue; // Pre-chain legacy event, skip
-      hashedCount++;
-      // Validate prevHash link
-      if(evt.prevHash !== prevHash){
-        return {
-          ok:false, status:'CORRUPTED',
-          failIndex:i, eventId:evt.id, eventType:evt.type,
-          expected_prevHash: prevHash,
-          actual_prevHash: evt.prevHash,
-          error:`Chain break at event #${i} (${evt.type})`
-        };
-      }
-      // Recompute hash
-      const recomputed = computeHash(evt);
-      if(recomputed !== evt.currentHash){
-        return {
-          ok:false, status:'CORRUPTED',
-          failIndex:i, eventId:evt.id, eventType:evt.type,
-          expected_hash: recomputed,
-          actual_hash: evt.currentHash,
-          error:`Hash mismatch at event #${i} (${evt.type}) — data was tampered`
-        };
-      }
-      prevHash = evt.currentHash;
+    // Find root(s): events whose prevHash is NOT the currentHash of any other chained event
+    // A valid linear chain has exactly ONE root.
+    const roots = chained.filter(function(e){ return !byCurrentHash[e.prevHash]; });
+    if(roots.length === 0){
+      return {ok:false, status:'CORRUPTED',
+        error:'Chain cycle detected — no root event found (possible data tampering)'};
     }
-    return {ok:true, status:'VALID', events:all.length, hashed:hashedCount};
+    if(roots.length > 1){
+      // Multiple roots = chain fork. Tolerate if all roots share the same prevHash (parallel inserts)
+      // but flag as corrupted if they diverge.
+      return {ok:false, status:'CORRUPTED',
+        error:'Chain fork: ' + roots.length + ' root events (' + roots.map(function(r){ return r.type; }).join(', ') + ')'};
+    }
+
+    // Walk the chain from root, verifying each event's hash
+    let current    = roots[0];
+    let visited    = 0;
+    const maxSteps = chained.length + 1; // cycle guard
+    while(current && visited <= maxSteps){
+      // Recompute and compare hash
+      const recomputed = computeHash(current);
+      if(recomputed !== current.currentHash){
+        return {ok:false, status:'CORRUPTED',
+          eventId:   current.id,
+          eventType: current.type,
+          error:     'Hash mismatch at (' + current.type + ') — data may have been tampered'};
+      }
+      visited++;
+      current = byPrevHash[current.currentHash]; // advance: find event whose prevHash = this currentHash
+    }
+
+    // Ensure every chained event was reachable (no orphans outside the main chain)
+    if(visited !== chained.length){
+      return {ok:false, status:'CORRUPTED',
+        error: 'Chain has ' + (chained.length - visited) + ' orphaned events unreachable from root'};
+    }
+
+    return {ok:true, status:'VALID', events:all.length, hashed:chained.length};
   }
 
   // Verify a single branch (§26 Rule 1)
@@ -4848,7 +4860,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.355'; // §v1.1.355: Fixed 3 system-test failures — (1) AUTH.hash format valid: salted SHA-256 by design, test now validates format+salting not equality; (2) EVENTS.log cleanup: delete TEST_EVENT, no rebuildChain; (3) verifyIntegrity FIX3: seeds prevHash from first chained event (not hardcoded GENESIS) — fixes false chain-break when legacy/un-hashed events precede chain (BG_AUDIT scenario); FIX-CRITICAL: run() async + all callers updated
+const APP_VERSION    = '1.1.355'; // §v1.1.355: FIX4-verifyIntegrity: chain-following algorithm (O(N), order-independent) — builds hash-pointer maps, walks root→tip via byPrevHash[], immune to DB.all() insertion order; FIX3: salted AUTH.hash tested by format not equality; EVENTS.log cleanup: delete TEST_EVENT only, no rebuildChain; FIX-CRITICAL: run() async
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
 // §v1.1.296: Stage 4 – End of Day Summary PDF and CSV exports (full content)
