@@ -3933,15 +3933,23 @@ const LEDGER_HASH = (function(){
     return _fnv1a64(raw);
   }
 
-  // Get last known hash from ledger
+  // Get last known hash from ledger — §v1.1.356: find TRUE chain tip
+  // Must return the currentHash of the chronologically LAST event in the chain,
+  // not just the last inserted event (insertion order ≠ chain order after restore/rebuild).
   function getLastHash(){
-    const all = DB.all('OPS_LOG'); // §v1.1.350: use DB interface
+    const all = DB.all('OPS_LOG');
     if(!all.length) return 'GENESIS';
-    // Find the most recent event with a hash
-    for(let i=all.length-1;i>=0;i--){
-      if(all[i].currentHash) return all[i].currentHash;
-    }
-    return 'GENESIS';
+    const chained = all.filter(function(e){ return !!e.currentHash; });
+    if(!chained.length) return 'GENESIS';
+    // Build set of all prevHashes — the tip event's currentHash won't appear as anyone's prevHash
+    const prevHashes = new Set(chained.map(function(e){ return e.prevHash; }));
+    const tips = chained.filter(function(e){ return !prevHashes.has(e.currentHash); });
+    if(tips.length === 1) return tips[0].currentHash; // clean chain — single tip
+    // Multiple tips (fork) or no tip → fall back to latest timestamp
+    const sorted = chained.slice().sort(function(a,b){
+      return (b.timestamp||'').localeCompare(a.timestamp||'');
+    });
+    return sorted[0].currentHash;
   }
 
   // Attach hash chain to a new event before storing
@@ -8222,6 +8230,18 @@ const APP = {
     try { _migrateExpensesPaymentFields(); } catch(_migErr) { console.warn('[v1.1.172] Migration error:', _migErr); }
     // §FIX-CRITICAL-2: Sync customers from invoices once at launch (not in render)
     setTimeout(()=>{ try{ CUST_PAGE.syncCustomersFromInvoices(); }catch(_){} }, 500);
+    // §v1.1.356: One-time chain repair on launch — fixes orphaned events in existing IndexedDB.
+    // getLastHash() was broken (used insertion order not chain order) causing new events to attach
+    // to wrong parent. This runs once per session: verifies chain, rebuilds if broken.
+    setTimeout(function(){
+      try{
+        const check = LEDGER_HASH.verifyIntegrity();
+        if(!check.ok && check.status !== 'TAMPERED'){
+          const rb = LEDGER_HASH.rebuildChain();
+          if(window.DEV_MODE) console.log('[CHAIN] Auto-repaired on launch:', rb);
+        }
+      }catch(e){ console.warn('[CHAIN] Launch repair failed:', e.message); }
+    }, 1000);
     // §v1.1.353 FIX-3: Daily auto-prune — cap OPS_LOG and INVENTORY_MOVEMENTS to prevent unbounded growth
     setTimeout(function() {
       try {
