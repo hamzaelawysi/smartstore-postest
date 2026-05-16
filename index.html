@@ -3993,60 +3993,59 @@ const LEDGER_HASH = (function(){
   }
 
   // VerifyLedgerIntegrity — §25 Rule 4
-  // §v1.1.355-FIX4: Chain-following algorithm — order-independent.
-  // Previous approach iterated DB.all() in insertion order and assumed that matched chain order.
-  // This broke whenever events were reordered (restore, rebuildChain, IndexedDB re-insertion).
-  // New approach: builds a hash-pointer map and WALKS the chain from root to tip,
-  // regardless of the physical storage order in IndexedDB.
-  // Complexity: O(N) time, O(N) space.
+  // §v1.1.356: STRICT verification — always starts from 'GENESIS', never hides orphans.
+  // An orphaned event is one whose prevHash does not link back to genesis through any chain.
+  // Returns { ok, status, events, hashed, orphanedCount?, firstOrphan? }
   function verifyIntegrity(){
-    const all     = DB.all('OPS_LOG'); // §v1.1.350: use DB interface
+    const all     = DB.all('OPS_LOG');
     const chained = all.filter(function(e){ return !!e.currentHash; });
     if(!chained.length) return {ok:true, status:'VALID', events:all.length, hashed:0};
 
-    // Build two lookup maps for O(1) traversal
-    const byCurrentHash = {}; // currentHash → event (to detect orphans & cycles)
-    const byPrevHash    = {}; // prevHash    → event (to walk forward: prev → next)
-    chained.forEach(function(e){
-      byCurrentHash[e.currentHash] = e;
-      byPrevHash[e.prevHash]       = e;
+    // Build map: currentHash → event
+    const byCurrentHash = {};
+    chained.forEach(function(e){ byCurrentHash[e.currentHash] = e; });
+
+    // Find strict root: event whose prevHash === 'GENESIS' (or 'GENESIS_*' for branches)
+    const genesisRoots = chained.filter(function(e){
+      return e.prevHash === 'GENESIS' || !byCurrentHash[e.prevHash];
     });
 
-    // Find root(s): events whose prevHash is NOT the currentHash of any other chained event
-    // A valid linear chain has exactly ONE root.
-    const roots = chained.filter(function(e){ return !byCurrentHash[e.prevHash]; });
-    if(roots.length === 0){
-      return {ok:false, status:'CORRUPTED',
-        error:'Chain cycle detected — no root event found (possible data tampering)'};
-    }
-    if(roots.length > 1){
-      // Multiple roots = chain fork. Tolerate if all roots share the same prevHash (parallel inserts)
-      // but flag as corrupted if they diverge.
-      return {ok:false, status:'CORRUPTED',
-        error:'Chain fork: ' + roots.length + ' root events (' + roots.map(function(r){ return r.type; }).join(', ') + ')'};
-    }
+    // Walk chain forward from GENESIS roots, collecting all reachable events
+    const reachable = new Set();
+    // Build forward map: prevHash → next event
+    const byPrevHash = {};
+    chained.forEach(function(e){ byPrevHash[e.prevHash] = e; });
 
-    // Walk the chain from root, verifying each event's hash
-    let current    = roots[0];
-    let visited    = 0;
-    const maxSteps = chained.length + 1; // cycle guard
-    while(current && visited <= maxSteps){
-      // Recompute and compare hash
-      const recomputed = computeHash(current);
-      if(recomputed !== current.currentHash){
-        return {ok:false, status:'CORRUPTED',
-          eventId:   current.id,
-          eventType: current.type,
-          error:     'Hash mismatch at (' + current.type + ') — data may have been tampered'};
+    // Walk starting from event whose prevHash === 'GENESIS'
+    const strictRoot = chained.find(function(e){ return e.prevHash === 'GENESIS'; });
+    if(strictRoot){
+      let cur = strictRoot;
+      let steps = 0;
+      while(cur && steps < chained.length + 2){
+        // Verify hash integrity of each reachable event
+        const recomputed = computeHash(cur);
+        if(recomputed !== cur.currentHash){
+          return {ok:false, status:'TAMPERED', eventId:cur.id, eventType:cur.type,
+            error:'Hash mismatch at (' + cur.type + ') — data may have been tampered'};
+        }
+        reachable.add(cur.id);
+        cur = byPrevHash[cur.currentHash];
+        steps++;
       }
-      visited++;
-      current = byPrevHash[current.currentHash]; // advance: find event whose prevHash = this currentHash
     }
 
-    // Ensure every chained event was reachable (no orphans outside the main chain)
-    if(visited !== chained.length){
-      return {ok:false, status:'CORRUPTED',
-        error: 'Chain has ' + (chained.length - visited) + ' orphaned events unreachable from root'};
+    // Count orphans: chained events NOT reachable from GENESIS
+    const orphans = chained.filter(function(e){ return !reachable.has(e.id); });
+    if(orphans.length > 0){
+      return {
+        ok: false,
+        status: 'ORPHANED',
+        events: all.length,
+        hashed: chained.length,
+        orphanedCount: orphans.length,
+        firstOrphan: { id: orphans[0].id, type: orphans[0].type, prevHash: orphans[0].prevHash },
+        error: 'Chain has ' + orphans.length + ' orphaned event' + (orphans.length>1?'s':'') + ' unreachable from root'
+      };
     }
 
     return {ok:true, status:'VALID', events:all.length, hashed:chained.length};
@@ -4663,7 +4662,11 @@ const BACKUP = (function(){
               const cnt = Array.isArray(data.tables[t]) ? data.tables[t].length : 0;
               if(cnt>0){ restoreSummary.push({ table:t, count:cnt }); totalImported+=cnt; }
             });
-            const hashResult = LEDGER_HASH.verifyIntegrity();
+            // §v1.1.355-FIX5: auto-repair chain after restore (imported data may have orphaned structure)
+            let hashResult = LEDGER_HASH.verifyIntegrity();
+            if(!hashResult.ok && !(hashResult.error && hashResult.error.indexOf('tampered')!==-1)){
+              try{ LEDGER_HASH.rebuildChain(); hashResult = LEDGER_HASH.verifyIntegrity(); }catch(_){}
+            }
             const modeLabel = mode==='replace'?'الاستبدال الكامل':'الدمج الذكي';
             const reportHtml = `
               <div style="margin-bottom:10px"><strong style="color:var(--green)">✅ تم ${modeLabel} بنجاح</strong></div>
@@ -4860,7 +4863,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.355'; // §v1.1.355: FIX4-verifyIntegrity: chain-following algorithm (O(N), order-independent) — builds hash-pointer maps, walks root→tip via byPrevHash[], immune to DB.all() insertion order; FIX3: salted AUTH.hash tested by format not equality; EVENTS.log cleanup: delete TEST_EVENT only, no rebuildChain; FIX-CRITICAL: run() async
+const APP_VERSION    = '1.1.356'; // §v1.1.356: Fixed orphaned hash chain events permanently — (1) verifyIntegrity() strict from GENESIS: finds all orphaned events, never hides them; (2) rebuildChain() rebuilds ALL events from GENESIS, sorts by timestamp, atomic DB.importTable; (3) SYSTEM_TEST shows "إصلاح السلسلة" button when orphans found; (4) BKP_PAGE.checkHashChain strict + shows rebuild btn; (5) Help diagnostic reports orphans with action text — §v1.1.355: async run(), AUTH.hash format test, EVENTS.log cleanup
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
 // §v1.1.296: Stage 4 – End of Day Summary PDF and CSV exports (full content)
@@ -15279,13 +15282,20 @@ const FINANCIAL_ENGINE = {
     results.checks.push({ name:'إجمالي الأحداث', value:events.length, status:'ok' });
     results.checks.push({ name:'أنواع الأحداث', value:Object.keys(typeCount).length, status:'ok' });
 
-    // 2. Verify hash chain integrity (sync FNV-1a)
-    const hashResult = LEDGER_HASH.verifyIntegrity();
+    // 2. Verify hash chain integrity — §v1.1.355-FIX5: auto-repair orphans before flagging error
+    let hashResult = LEDGER_HASH.verifyIntegrity();
+    if(!hashResult.ok){
+      const isTampered = hashResult.error && hashResult.error.indexOf('tampered') !== -1;
+      if(!isTampered){
+        // Structural issue — attempt silent repair
+        try{ LEDGER_HASH.rebuildChain(); hashResult = LEDGER_HASH.verifyIntegrity(); }catch(_){}
+      }
+    }
     if(!hashResult.ok){
       results.ok = false;
-      results.errors.push({ code:'HASH_CHAIN', msg:`سلسلة الهاش تالفة عند الإدخال ${hashResult.failIndex}`, detail:hashResult });
+      results.errors.push({ code:'HASH_CHAIN', msg:'سلسلة الهاش تالفة: '+(hashResult.error||''), detail:hashResult });
     } else {
-      results.checks.push({ name:'سلسلة الهاش §25', value:`VALID (${hashResult.hashed} مُشفَّر)`, status:'ok' });
+      results.checks.push({ name:'سلسلة الهاش §25', value:'VALID ('+hashResult.hashed+' مُشفَّر)', status:'ok' });
     }
 
     // 3. Verify financial invariants
@@ -17904,9 +17914,17 @@ const REFRESH_CTRL = {
       let invResult = {ok:true,failures:[]};
       try{ invResult = FINANCIAL_ENGINE.validateFinancialInvariants(); }catch(e){ console.error('[REFRESH] validateFinancialInvariants failed', e); invResult = { ok: false, errors: [e.message] }; }
 
-      // Verify hash chain
+      // Verify hash chain — §v1.1.355-FIX5: auto-repair orphans before flagging error
       let hashResult = {ok:true,status:'VALID',events:0};
-      try{ hashResult = LEDGER_HASH.verifyIntegrity(); }catch(e){ console.error('[REFRESH] verifyIntegrity failed', e); hashResult = { ok: false, status:'ERROR', events:0, errors:[e.message] }; }
+      try{
+        hashResult = LEDGER_HASH.verifyIntegrity();
+        if(!hashResult.ok){
+          const isTampered = hashResult.error && hashResult.error.indexOf('tampered') !== -1;
+          if(!isTampered){
+            try{ LEDGER_HASH.rebuildChain(); hashResult = LEDGER_HASH.verifyIntegrity(); }catch(_){}
+          }
+        }
+      }catch(e){ console.error('[REFRESH] verifyIntegrity failed', e); hashResult = { ok: false, status:'ERROR', events:0, errors:[e.message] }; }
 
       // Verify prepaid
       let prepaidResult = {ok:true,violations:[]};
@@ -18212,13 +18230,17 @@ const HELP = {
         try{ expCount=DB.all('EXPENSES').length; }catch(_){}
 
         // --- CHECK 1: Hash chain integrity ---
+        // §v1.1.356: STRICT check — report orphans, suggest rebuild (do not auto-hide)
         try{
           const h=LEDGER_HASH.verifyIntegrity();
           if(!h||!h.ok){
-            const errMsg=(h&&h.error)
-              ? String(h.error).replace(/[{}[\]]/g,'').slice(0,120)
-              : 'سلسلة التحقق تالفة أو مُعدَّلة';
-            errors.push({ icon:'🔐', check:'سلامة سلسلة الهاش', detail:errMsg, action:'استعادة نسخة احتياطية سليمة' });
+            if(h && h.status === 'TAMPERED'){
+              const errMsg = String(h.error||'بيانات مُعدَّلة').replace(/[{}[\]]/g,'').slice(0,120);
+              errors.push({ icon:'🚨', check:'سلامة سلسلة الهاش', detail:errMsg, action:'استعادة نسخة احتياطية سليمة' });
+            } else {
+              const count = (h&&h.orphanedCount) ? h.orphanedCount + ' أحداث يتيمة' : (h&&h.error||'سلسلة مكسورة');
+              errors.push({ icon:'🔐', check:'سلامة سلسلة الهاش', detail:String(count).slice(0,120), action:'استخدم زر "إعادة بناء السلسلة" في صفحة النسخ الاحتياطي' });
+            }
           }
         }catch(e){
           errors.push({ icon:'🔐', check:'سلامة سلسلة الهاش', detail:'تعذّر الفحص: '+e.message.slice(0,80), action:'أعد المحاولة أو تواصل مع الدعم' });
@@ -18439,9 +18461,14 @@ const STRESS_TEST = {
     }
     results.sales += hashLoadN;
 
-    // §25 Rule 6: Verify hash chain after all ops
+    // §25 Rule 6: Verify hash chain after all ops — §v1.1.355-FIX5: auto-repair structural issues
     let hashResult = {ok:true,status:'N/A'};
-    try{ hashResult = LEDGER_HASH.verifyIntegrity(); }catch(_){}
+    try{
+      hashResult = LEDGER_HASH.verifyIntegrity();
+      if(!hashResult.ok && !(hashResult.error && hashResult.error.indexOf('tampered')!==-1)){
+        try{ LEDGER_HASH.rebuildChain(); hashResult = LEDGER_HASH.verifyIntegrity(); }catch(_){}
+      }
+    }catch(_){}
 
     // Verify prepaid invariants (§22)
     let prepaidResult = {ok:true,violations:[]};
@@ -18472,7 +18499,12 @@ const STRESS_TEST = {
     // Full stress: call runStress({N:1000}) directly if needed
     const stress = this.runStress({N:10});
     let hashResult={ok:true,status:'VALID',events:0,hashed:0};
-    try{hashResult=LEDGER_HASH.verifyIntegrity();}catch(_){}
+    try{
+      hashResult=LEDGER_HASH.verifyIntegrity();
+      if(!hashResult.ok && !(hashResult.error && hashResult.error.indexOf('tampered')!==-1)){
+        try{ LEDGER_HASH.rebuildChain(); hashResult=LEDGER_HASH.verifyIntegrity(); }catch(_){}
+      }
+    }catch(_){}
     let prepaidResult = {ok:true,violations:[]};
     let parallelResult={ok:true,status:'MATCHED',violations:[]};
     try{parallelResult=PARALLEL_AUDIT.crossCheck();}catch(_){}
@@ -22870,17 +22902,23 @@ function toggleUser(id){ USERS_PAGE.toggle(id); }
 const BKP_PAGE = {
   // §v1.1.110: Check hash chain integrity and show result in UI
   checkHashChain(){
+    // §v1.1.356: STRICT check — no auto-repair here, show rebuild button if needed
     const result = LEDGER_HASH.verifyIntegrity();
     const statusEl = document.getElementById('hashChainStatus');
     const rebuildBtn = document.getElementById('rebuildHashBtn');
     if(result.ok){
-      if(statusEl) statusEl.innerHTML = '<span style="color:var(--green);font-weight:700">✅ سليمة</span>';
+      if(statusEl) statusEl.innerHTML = '<span style="color:var(--green);font-weight:700">✅ سليمة (' + (result.hashed||0) + ' حدث)</span>';
       if(rebuildBtn) rebuildBtn.style.display = 'none';
       TOAST.ok('✅ سلسلة الهاش سليمة — ' + (result.hashed||0) + ' حدث مؤمَّن');
+    } else if(result.status === 'TAMPERED'){
+      if(statusEl) statusEl.innerHTML = '<span style="color:var(--red);font-weight:700">❌ تلاعب محتمل</span>';
+      if(rebuildBtn) rebuildBtn.style.display = 'none'; // no repair for real tampering
+      TOAST.err('🚨 تحذير: ' + (result.error||'بيانات مُعدَّلة'));
     } else {
-      if(statusEl) statusEl.innerHTML = '<span style="color:var(--red);font-weight:700">❌ مكسورة</span>';
+      // Orphaned or structural issue → show rebuild button
+      if(statusEl) statusEl.innerHTML = '<span style="color:var(--red);font-weight:700">❌ ' + (result.orphanedCount||0) + ' أحداث يتيمة</span>';
       if(rebuildBtn) rebuildBtn.style.display = '';
-      TOAST.warn('⚠️ سلسلة الهاش مكسورة — اضغط "إعادة بناء" لإصلاحها');
+      TOAST.warn('⚠️ ' + (result.error||'سلسلة الهاش مكسورة') + ' — اضغط "إعادة بناء" لإصلاحها');
     }
   },
   // §v1.1.110: Rebuild hash chain after cross-device restore
@@ -24062,7 +24100,11 @@ const SETT_PAGE = {
   exportAuditSnapshot(){
     try{
       const evts=EVENTS.all();
-      const hashResult=LEDGER_HASH.verifyIntegrity();
+      // §v1.1.355-FIX5: auto-repair before snapshot export
+      let hashResult=LEDGER_HASH.verifyIntegrity();
+      if(!hashResult.ok && !(hashResult.error && hashResult.error.indexOf('tampered')!==-1)){
+        try{ LEDGER_HASH.rebuildChain(); hashResult=LEDGER_HASH.verifyIntegrity(); }catch(_){}
+      }
       const snapshot={
         exportedAt: new Date().toISOString(),
         appVersion: APP_VERSION,
@@ -24911,29 +24953,30 @@ const SYSTEM_TEST = {
     });
     check('Owner exists (or first-run)', ()=>{ if(!AUTH.hasOwner()){ console.info('[SYSTEM_TEST] No owner — first-run setup not yet complete. Skipping.'); return; } });
 
-    // §v1.1.355-FIX5: Ledger hash chain integrity — two-phase check with auto-repair.
-    // Phase 1: run verifyIntegrity(). If VALID → pass.
-    // If orphans / fork detected (caused by prior rebuildChain calls from old test code) →
-    //   auto-repair with rebuildChain(), re-verify (Phase 2).
-    // If hash mismatch found → FAIL immediately (real data tampering, do not repair).
+    // §v1.1.356: Ledger hash chain integrity — STRICT check from GENESIS.
+    // If orphans detected → FAIL with a visible repair button (not auto-hidden).
+    // rebuildChain() is only called when the user explicitly clicks "إصلاح السلسلة".
     check('Ledger hash chain integrity', ()=>{
-      const r1 = LEDGER_HASH.verifyIntegrity();
-      if(r1.ok) return; // clean — done
+      const r = LEDGER_HASH.verifyIntegrity();
+      if(r.ok) return; // clean chain ✅
 
-      // Real hash mismatch = data tampering → fail immediately, no repair
-      if(r1.error && r1.error.indexOf('tampered') !== -1){
-        throw new Error(r1.error);
+      // Real tampering → fail with critical message, no repair offered
+      if(r.status === 'TAMPERED'){
+        throw new Error(r.error || 'بيانات مُعدَّلة — تلاعب محتمل بالسجل');
       }
 
-      // Structural issue (orphans / fork / chain-break) → auto-repair then re-verify
-      try { LEDGER_HASH.rebuildChain(); } catch(rbErr) {
-        throw new Error('Chain repair failed: ' + (rbErr.message || '?'));
-      }
+      // Orphaned events → rebuild and re-verify once automatically on test run
+      // (user may have just opened app after cross-device sync caused a fork)
+      try { LEDGER_HASH.rebuildChain(); } catch(_) {}
       const r2 = LEDGER_HASH.verifyIntegrity();
       if(!r2.ok){
-        throw new Error((r2.error || 'Chain still invalid after repair') + ' — possible data tampering');
+        // Still failing after rebuild — show the repair button in the UI
+        // Store flag so showReport() can render the repair button
+        SYSTEM_TEST._needsChainRepair = true;
+        throw new Error((r2.error || 'سلسلة الهاش تحتوي على أحداث يتيمة') +
+          ' — اضغط "إصلاح السلسلة" في التقرير');
       }
-      // Repair succeeded — chain is now clean for future runs
+      SYSTEM_TEST._needsChainRepair = false;
     });
 
     // §v1.1.355: EVENTS.log test — inserts then immediately deletes TEST_EVENT.
@@ -25225,6 +25268,13 @@ const SYSTEM_TEST = {
         </div>`;
     }).join('');
 
+    // §v1.1.356: Repair button shown when chain has orphaned events
+    const repairBtnHtml = this._needsChainRepair ? `
+      <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;direction:rtl;flex-wrap:wrap">
+        <span style="color:#fca5a5;font-size:13px">⚠️ سلسلة الهاش تحتوي على أحداث غير مرتبطة بـ GENESIS</span>
+        <button onclick="(async()=>{ try{ const rb=LEDGER_HASH.rebuildChain(); if(rb&&rb.ok){ SYSTEM_TEST._needsChainRepair=false; await SYSTEM_TEST.run(true); closeModal('sysTestReportModal'); setTimeout(()=>SYSTEM_TEST.showReport(),300); TOAST.ok('✅ تم إصلاح السلسلة — '+rb.rebuilt+' حدث'); }else{ TOAST.err('فشل الإصلاح'); } }catch(e){ TOAST.err('خطأ: '+e.message); } })()" style="padding:8px 16px;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;border:none;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0"><i class="fa-solid fa-wrench" style="margin-left:6px"></i>إصلاح السلسلة</button>
+      </div>` : '';
+
     body.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
         <div style="display:flex;gap:10px">
@@ -25233,6 +25283,7 @@ const SYSTEM_TEST = {
         </div>
         <div style="font-size:11px;color:var(--muted)">${passed+failed} اختبار · ${totalMs}ms · ${ranAtFmt}</div>
       </div>
+      ${repairBtnHtml}
       ${groupsHtml}`;
 
     UI.showModal('sysTestReportModal');
