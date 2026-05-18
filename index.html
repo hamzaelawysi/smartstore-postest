@@ -780,22 +780,71 @@ const ADMIN_EMAIL = 'hamzaeldibo@gmail.com';
 <div class="page" id="page-invoices">
   <div class="ph"><div><h1>الفواتير 📋</h1><p>سجل جميع الفواتير</p></div><div style="display:flex;gap:7px"><button class="btn bgh bsm" onclick="exportInvCSV()"><i class="fa-brands fa-file-excel" style="color:#1D6F42"></i>Excel</button><button class="btn bgh bsm" onclick="exportInvPDF()"><i class="fa-solid fa-file-pdf" style="color:#e53e3e"></i>تصدير PDF</button></div></div>
   <div class="kgrid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px" id="invKPIs"></div>
-  <div class="card"><div class="srch">
-    <div class="iw" style="flex:2"><i class="fa-solid fa-magnifying-glass"></i><input type="text" id="invSrch" placeholder="ابحث..." oninput="renderInvTable()"></div>
-    <select style="width:120px" id="invType" onchange="renderInvTable()"><option>جميع الأنواع</option><option>بيع</option><option>مشتريات</option><option>مرتجع</option></select>
-    <select style="width:120px" id="invStat" onchange="renderInvTable()"><option>جميع الحالات</option><option>مكتملة</option><option>مدفوعة جزئياً</option><option>معلقة</option><option>ملغاة</option></select>
-    <input type="date" style="width:140px" id="invDF" onchange="renderInvTable()">
-    <input type="date" style="width:140px" id="invDT" onchange="renderInvTable()">
-    <input type="text" style="width:170px" id="invCustFilter" list="invCustDatalist" placeholder="فلتر العميل" oninput="renderInvTable()" title="فلتر حسب اسم أو كود العميل" autocomplete="off">
+
+  <!-- §v1.1.357: New daily-grouped filter bar -->
+  <div class="card" id="invFilterBar" style="padding:14px 16px;margin-bottom:10px">
+    <!-- Row 1: Day navigation -->
+    <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:12px">
+      <button class="btn bgh bic" id="invPrevDay" onclick="INVS.dayNav(-1)" title="اليوم السابق" style="width:36px;height:36px;border-radius:50%"><i class="fa-solid fa-chevron-right"></i></button>
+      <div style="text-align:center;min-width:160px">
+        <div style="font-size:16px;font-weight:800;color:var(--txt)" id="invDayLabel">اليوم</div>
+        <div style="font-size:12px;color:var(--muted)" id="invDaySubLabel"></div>
+      </div>
+      <button class="btn bgh bic" id="invNextDay" onclick="INVS.dayNav(1)" title="اليوم التالي" style="width:36px;height:36px;border-radius:50%"><i class="fa-solid fa-chevron-left"></i></button>
+    </div>
+    <!-- Row 2: Mode buttons + custom range + view toggle -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <button class="btn" id="invModeAll" onclick="INVS.setMode('all')" style="font-size:12px;padding:6px 14px"><i class="fa-regular fa-calendar-days" style="margin-left:5px"></i>جميع الأيام</button>
+      <button class="btn" id="invModeRange" onclick="INVS.setMode('range')" style="font-size:12px;padding:6px 14px"><i class="fa-solid fa-calendar-week" style="margin-left:5px"></i>من ← إلى</button>
+      <div id="invRangeInputs" style="display:none;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <input type="date" id="invRangeFrom" style="width:140px;font-size:12px" onchange="INVS._applyRange()">
+        <span style="color:var(--muted);font-size:12px">←</span>
+        <input type="date" id="invRangeTo" style="width:140px;font-size:12px" onchange="INVS._applyRange()">
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn bgh bsm" id="invViewToggle" onclick="INVS.toggleView()" style="font-size:12px;padding:6px 14px"><i class="fa-solid fa-table-list" style="margin-left:5px"></i>عرض جدول</button>
+    </div>
+    <!-- Row 3: Search + payment filter -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <div class="iw" style="flex:1;min-width:200px"><i class="fa-solid fa-magnifying-glass"></i><input type="text" id="invSrch" placeholder="اسم العميل / رقم فاتورة / رمز..." oninput="INVS.render()"></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn act" id="invPayAll"     onclick="INVS.setPayFilter('all')"     style="font-size:12px;padding:5px 12px">الكل</button>
+        <button class="btn bgh" id="invPayCash"    onclick="INVS.setPayFilter('cash')"    style="font-size:12px;padding:5px 12px">💵 نقدي</button>
+        <button class="btn bgh" id="invPayPartial" onclick="INVS.setPayFilter('partial')" style="font-size:12px;padding:5px 12px">🔴 جزئي</button>
+        <button class="btn bgh" id="invPayDebt"    onclick="INVS.setPayFilter('debt')"    style="font-size:12px;padding:5px 12px">📋 دين</button>
+      </div>
+    </div>
+    <!-- Legacy filters (hidden, kept for export/PDF) -->
+    <input type="hidden" id="invType" value="جميع الأنواع">
+    <input type="hidden" id="invStat" value="جميع الحالات">
+    <input type="hidden" id="invDF">
+    <input type="hidden" id="invDT">
+    <input type="hidden" id="invCustFilter">
     <datalist id="invCustDatalist"></datalist>
-    <button class="btn bgh bsm" id="invCustResetBtn" onclick="INVS.resetCustFilter()" title="إعادة تعيين فلتر العميل" style="display:none;white-space:nowrap">↺ إعادة تعيين</button>
+    <button style="display:none" id="invCustResetBtn"></button>
   </div>
-  <!-- §v1.1.183: virtual-scroll count badge -->
-  <div id="invVsInfo" style="font-size:11px;color:var(--muted);padding:4px 2px 0;text-align:left;display:none"></div>
-  <div class="tw"><table><thead><tr><th>رقم الفاتورة</th><th>النوع</th><th>التاريخ</th><th>العميل</th><th>الكاشير</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody id="invTbody"></tbody></table>
-  <!-- §v1.1.183: IntersectionObserver sentinel for virtual scrolling -->
-  <div id="invVsSentinel" style="height:1px;margin:0;padding:0"></div>
-  </div></div>
+
+  <!-- §v1.1.357: Daily grouped view (default) -->
+  <div id="invDailyView">
+    <div id="invDailyGroups"></div>
+    <div id="invLoadMoreWrap" style="text-align:center;padding:16px;display:none">
+      <button class="btn bgh" onclick="INVS.loadMore()" style="padding:10px 32px;font-size:13px"><i class="fa-solid fa-rotate-down" style="margin-left:6px"></i>تحميل المزيد</button>
+    </div>
+    <div id="invDailyEmpty" style="display:none;text-align:center;padding:40px;color:var(--muted)">
+      <i class="fa-solid fa-receipt" style="font-size:32px;margin-bottom:10px;display:block"></i>
+      لا توجد فواتير في هذه الفترة
+    </div>
+  </div>
+
+  <!-- §v1.1.357: Classic table view (toggled) -->
+  <div id="invTableView" style="display:none">
+    <div class="card">
+      <div id="invVsInfo" style="font-size:11px;color:var(--muted);padding:4px 2px 0;text-align:left;display:none"></div>
+      <div class="tw"><table><thead><tr><th>رقم الفاتورة</th><th>النوع</th><th>التاريخ</th><th>العميل</th><th>الكاشير</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody id="invTbody"></tbody></table>
+      <div id="invVsSentinel" style="height:1px;margin:0;padding:0"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ══ RETURNS ══ -->
@@ -920,16 +969,64 @@ const ADMIN_EMAIL = 'hamzaeldibo@gmail.com';
   </div>
   <!-- ── CUSTOMERS TAB ── -->
   <div id="debtPanelCustomers">
-    <div class="card"><div class="srch">
-      <div class="iw" style="flex:2"><i class="fa-solid fa-magnifying-glass"></i><input type="text" id="debtSrch" placeholder="بحث: اسم، كود، رقم فاتورة، هاتف..." oninput="renderDebtsTable()"></div>
-      <select style="width:130px" id="debtStatF" onchange="renderDebtsTable()"><option>جميع الحالات</option><option>متأخر</option><option>نشط</option><option>مسدد</option></select>
+    <!-- §v1.1.357: New daily-grouped filter bar for debts -->
+    <div class="card" id="debtFilterBar" style="padding:14px 16px;margin-bottom:10px">
+      <!-- Row 1: Day navigation -->
+      <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:12px">
+        <button class="btn bgh bic" id="debtPrevDay" onclick="DEBTS.dayNav(-1)" title="اليوم السابق" style="width:36px;height:36px;border-radius:50%"><i class="fa-solid fa-chevron-right"></i></button>
+        <div style="text-align:center;min-width:160px">
+          <div style="font-size:16px;font-weight:800;color:var(--txt)" id="debtDayLabel">اليوم</div>
+          <div style="font-size:12px;color:var(--muted)" id="debtDaySubLabel"></div>
+        </div>
+        <button class="btn bgh bic" id="debtNextDay" onclick="DEBTS.dayNav(1)" title="اليوم التالي" style="width:36px;height:36px;border-radius:50%"><i class="fa-solid fa-chevron-left"></i></button>
+      </div>
+      <!-- Row 2: Mode buttons + view toggle -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        <button class="btn" id="debtModeAll" onclick="DEBTS.setMode('all')" style="font-size:12px;padding:6px 14px"><i class="fa-regular fa-calendar-days" style="margin-left:5px"></i>جميع الأيام</button>
+        <button class="btn" id="debtModeRange" onclick="DEBTS.setMode('range')" style="font-size:12px;padding:6px 14px"><i class="fa-solid fa-calendar-week" style="margin-left:5px"></i>من ← إلى</button>
+        <div id="debtRangeInputs" style="display:none;gap:6px;align-items:center;flex-wrap:wrap">
+          <input type="date" id="debtRangeFrom" style="width:140px;font-size:12px" onchange="DEBTS._applyRange()">
+          <span style="color:var(--muted);font-size:12px">←</span>
+          <input type="date" id="debtRangeTo" style="width:140px;font-size:12px" onchange="DEBTS._applyRange()">
+        </div>
+        <div style="flex:1"></div>
+        <button class="btn bgh bsm" id="debtViewToggle" onclick="DEBTS.toggleView()" style="font-size:12px;padding:6px 14px"><i class="fa-solid fa-table-list" style="margin-left:5px"></i>عرض جدول</button>
+      </div>
+      <!-- Row 3: Search + status filter -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <div class="iw" style="flex:1;min-width:200px"><i class="fa-solid fa-magnifying-glass"></i><input type="text" id="debtSrch" placeholder="اسم العميل / رقم فاتورة / هاتف..." oninput="DEBTS.render()"></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn act" id="debtPayAll"     onclick="DEBTS.setPayFilter('all')"     style="font-size:12px;padding:5px 12px">الكل</button>
+          <button class="btn bgh" id="debtPayCash"    onclick="DEBTS.setPayFilter('cash')"    style="font-size:12px;padding:5px 12px">💵 نقدي</button>
+          <button class="btn bgh" id="debtPayPartial" onclick="DEBTS.setPayFilter('partial')" style="font-size:12px;padding:5px 12px">🔴 جزئي</button>
+          <button class="btn bgh" id="debtPayDebt"    onclick="DEBTS.setPayFilter('debt')"    style="font-size:12px;padding:5px 12px">📋 دين</button>
+        </div>
+      </div>
+      <!-- Legacy filters hidden -->
+      <input type="hidden" id="debtStatF" value="جميع الحالات">
     </div>
-    <!-- §v1.1.185: virtual-scroll count badge -->
-    <div id="debtVsInfo" style="font-size:11px;color:var(--muted);padding:4px 2px 0;text-align:left;display:none"></div>
-    <div class="tw"><table><thead><tr><th>العميل</th><th>إجمالي الدين</th><th>المسدد</th><th>المتبقي</th><th>المتأخر</th><th>آخر دفعة</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody id="debtTbody"></tbody></table>
-    <!-- §v1.1.185: IntersectionObserver sentinel for virtual scrolling -->
-    <div id="debtVsSentinel" style="height:1px;margin:0;padding:0"></div>
-    </div></div>
+
+    <!-- §v1.1.357: Daily grouped view -->
+    <div id="debtDailyView">
+      <div id="debtDailyGroups"></div>
+      <div id="debtLoadMoreWrap" style="text-align:center;padding:16px;display:none">
+        <button class="btn bgh" onclick="DEBTS.loadMore()" style="padding:10px 32px;font-size:13px"><i class="fa-solid fa-rotate-down" style="margin-left:6px"></i>تحميل المزيد</button>
+      </div>
+      <div id="debtDailyEmpty" style="display:none;text-align:center;padding:40px;color:var(--muted)">
+        <i class="fa-solid fa-file-invoice-dollar" style="font-size:32px;margin-bottom:10px;display:block"></i>
+        لا توجد ديون في هذه الفترة
+      </div>
+    </div>
+
+    <!-- §v1.1.357: Classic table view -->
+    <div id="debtTableView" style="display:none">
+      <div class="card">
+        <div id="debtVsInfo" style="font-size:11px;color:var(--muted);padding:4px 2px 0;text-align:left;display:none"></div>
+        <div class="tw"><table><thead><tr><th>العميل</th><th>إجمالي الدين</th><th>المسدد</th><th>المتبقي</th><th>المتأخر</th><th>آخر دفعة</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody id="debtTbody"></tbody></table>
+        <div id="debtVsSentinel" style="height:1px;margin:0;padding:0"></div>
+        </div>
+      </div>
+    </div>
   </div>
   <!-- ── SUPPLIERS TAB ── -->
   <div id="debtPanelSuppliers" style="display:none">
@@ -4871,7 +4968,7 @@ const THEME = (function(){
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_VERSION    = '1.1.356'; // §v1.1.356: Fixed orphaned hash chain events permanently — (1) verifyIntegrity() strict from GENESIS: finds all orphaned events, never hides them; (2) rebuildChain() rebuilds ALL events from GENESIS, sorts by timestamp, atomic DB.importTable; (3) SYSTEM_TEST shows "إصلاح السلسلة" button when orphans found; (4) BKP_PAGE.checkHashChain strict + shows rebuild btn; (5) Help diagnostic reports orphans with action text — §v1.1.355: async run(), AUTH.hash format test, EVENTS.log cleanup
+const APP_VERSION    = '1.1.357'; // §v1.1.357: Added grouped daily view with date/payment filters to Invoices and Debts pages — day navigation (← →), all-days mode, custom range, payment type filter (الكل/نقدي/جزئي/دين), toggle daily↔table view, load-more pagination, persisted view preference in localStorage — §v1.1.356: Fixed orphaned hash chain events permanently
 // §v1.1.298: Added Stock Insights tab (categories overview) as first tab in Reports
 // §v1.1.297: EOD Summary – add خصم ديون (DEBT_DISCOUNT) to debt reductions section
 // §v1.1.296: Stage 4 – End of Day Summary PDF and CSV exports (full content)
@@ -10434,6 +10531,210 @@ const INVS = {
   _vsBatch: 100,   // rows per batch loaded on scroll
   _vsObs:   null,  // active IntersectionObserver (one at a time)
 
+  // §v1.1.357: Daily view state
+  _mode:      'day',   // 'day' | 'all' | 'range'
+  _curDay:    null,    // YYYY-MM-DD string — null = today
+  _payFilter: 'all',  // 'all' | 'cash' | 'partial' | 'debt'
+  _viewMode:  'daily', // 'daily' | 'table' — persisted in localStorage
+  _daysLoaded: 7,     // for 'all'/'range' mode — days per batch
+  _allDays:   [],     // sorted day keys for pagination
+  _daysShown: 0,      // how many days currently visible
+
+  // ── init view mode from localStorage ──
+  _initView(){
+    this._viewMode = localStorage.getItem('_invViewMode') || 'daily';
+  },
+
+  // ── helpers ──
+  _today(){ return new Date().toISOString().slice(0,10); },
+  _fmtDay(d){
+    try{
+      const dt = new Date(d + 'T00:00:00');
+      return dt.toLocaleDateString('ar-SA', {day:'numeric', month:'long', year:'numeric'});
+    }catch(_){ return d; }
+  },
+
+  // ── day navigation ──
+  dayNav(dir){
+    if(this._mode !== 'day') return;
+    const base = this._curDay || this._today();
+    const dt   = new Date(base + 'T00:00:00');
+    dt.setDate(dt.getDate() + dir);
+    const next = dt.toISOString().slice(0,10);
+    if(next > this._today()) return; // no future days
+    this._curDay = next;
+    this.render();
+  },
+
+  // ── set mode (day/all/range) ──
+  setMode(mode){
+    this._mode = mode;
+    const ri = document.getElementById('invRangeInputs');
+    if(ri) ri.style.display = mode === 'range' ? 'flex' : 'none';
+    this.render();
+  },
+
+  _applyRange(){
+    this._mode = 'range';
+    this.render();
+  },
+
+  // ── payment filter ──
+  setPayFilter(f){
+    this._payFilter = f;
+    ['invPayAll','invPayCash','invPayPartial','invPayDebt'].forEach(id=>{
+      const el = document.getElementById(id);
+      if(el){ el.className = 'btn ' + (
+        (f==='all'&&id==='invPayAll')||(f==='cash'&&id==='invPayCash')||
+        (f==='partial'&&id==='invPayPartial')||(f==='debt'&&id==='invPayDebt')
+        ? 'act' : 'bgh'); }
+    });
+    this.render();
+  },
+
+  // ── view toggle (daily ↔ table) ──
+  toggleView(){
+    this._viewMode = this._viewMode === 'daily' ? 'table' : 'daily';
+    localStorage.setItem('_invViewMode', this._viewMode);
+    this.render();
+  },
+
+  // ── load more days (all/range modes) ──
+  loadMore(){
+    this._daysShown = Math.min(this._daysShown + 10, this._allDays.length);
+    this._renderDailyGroups(this._allDays, false);
+    document.getElementById('invLoadMoreWrap').style.display =
+      this._daysShown < this._allDays.length ? 'block' : 'none';
+  },
+
+  // ── update nav UI ──
+  _updateNav(){
+    const today = this._today();
+    const cur   = this._curDay || today;
+    const isDay = this._mode === 'day';
+    // Nav arrows
+    const prev = document.getElementById('invPrevDay');
+    const next = document.getElementById('invNextDay');
+    if(prev) prev.style.opacity = isDay ? '1' : '0.3';
+    if(next){ next.style.opacity = isDay && cur < today ? '1' : '0.3'; next.disabled = !isDay || cur >= today; }
+    // Day label
+    const label    = document.getElementById('invDayLabel');
+    const subLabel = document.getElementById('invDaySubLabel');
+    if(label){
+      if(this._mode === 'all')   label.textContent = 'جميع الأيام';
+      else if(this._mode === 'range') label.textContent = 'نطاق مخصص';
+      else label.textContent = cur === today ? 'اليوم' : this._fmtDay(cur);
+    }
+    if(subLabel) subLabel.textContent = this._mode === 'day' ? this._fmtDay(cur) : '';
+    // Mode buttons
+    ['invModeAll','invModeRange'].forEach(id=>{
+      const el = document.getElementById(id);
+      if(el) el.className = 'btn ' + (
+        (id==='invModeAll'&&this._mode==='all')||(id==='invModeRange'&&this._mode==='range')
+        ? 'act' : 'bgh');
+    });
+    // View toggle button label
+    const vt = document.getElementById('invViewToggle');
+    if(vt) vt.innerHTML = this._viewMode === 'daily'
+      ? '<i class="fa-solid fa-table-list" style="margin-left:5px"></i>عرض جدول'
+      : '<i class="fa-solid fa-calendar-days" style="margin-left:5px"></i>عرض يومي';
+  },
+
+  // ── get pay type for invoice ──
+  _payType(inv, evts){
+    const {paid, remain} = CALC.invoiceActualRemain(inv, evts);
+    if(inv.status === 'ملغاة') return 'void';
+    if(remain <= 0.001)  return 'cash';
+    if(paid   >  0.001)  return 'partial';
+    return 'debt';
+  },
+
+  // ── filter invoices list ──
+  _filteredInvs(evts){
+    const today  = this._today();
+    const srch   = (document.getElementById('invSrch')?.value || '').toLowerCase();
+    const from   = this._mode === 'day'   ? (this._curDay || today)
+                 : this._mode === 'range' ? (document.getElementById('invRangeFrom')?.value || '')
+                 : '';
+    const to     = this._mode === 'day'   ? (this._curDay || today)
+                 : this._mode === 'range' ? (document.getElementById('invRangeTo')?.value || '')
+                 : '';
+    return DB.all('INVOICES')
+      .filter(i=>{
+        if(srch && !(i.num||'').toLowerCase().includes(srch) && !(i.customer||'').toLowerCase().includes(srch)) return false;
+        if(from && i.date < from) return false;
+        if(to   && i.date > to)   return false;
+        const pt = this._payType(i, evts);
+        if(this._payFilter === 'cash'    && pt !== 'cash')    return false;
+        if(this._payFilter === 'partial' && pt !== 'partial') return false;
+        if(this._payFilter === 'debt'    && pt !== 'debt')    return false;
+        return true;
+      })
+      .sort((a,b) => (b.date||'').localeCompare(a.date||'') || (b.created_at||'').localeCompare(a.created_at||''));
+  },
+
+  // ── build a daily card item row ──
+  _buildDayItem(inv, s, evts){
+    const {paid, remain} = CALC.invoiceActualRemain(inv, evts);
+    const pt = this._payType(inv, evts);
+    const dot = pt==='cash' ? '🟢' : pt==='partial' ? '🔴' : pt==='void' ? '⚫' : '🟡';
+    const liveStatus = inv.status==='ملغاة' ? 'ملغاة' : remain<=0.001 ? 'مكتملة' : paid>0.001 ? 'جزئي' : 'دين';
+    const statusBadge = liveStatus==='مكتملة'?'bem':liveStatus==='جزئي'?'bbl':liveStatus==='ملغاة'?'br':'bgo';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--bdr);flex-wrap:wrap">
+      <span style="font-size:18px;flex-shrink:0">${dot}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:13px">${escapeHtml(inv.customer)} <span class="badge bbl" style="font-size:10px">${escapeHtml(inv.num)}</span></div>
+        <div style="font-size:11px;color:var(--muted)">${inv.cashier||''} · ${inv.date||''}</div>
+      </div>
+      <div style="text-align:left;flex-shrink:0">
+        <div style="font-weight:800;font-size:14px">${parseFloat(inv.total||0).toFixed(2)} ${s}</div>
+        <div style="font-size:10px"><span class="badge ${statusBadge}">${liveStatus}</span></div>
+      </div>
+      <div style="display:flex;gap:4px;flex-shrink:0">
+        <button class="btn bgh bic bsm" title="معاينة" onclick="INVS.view('${inv.id}')"><i class="fa-solid fa-eye fa-xs"></i></button>
+        <button class="btn br bic bsm" title="طباعة" onclick="INVS.view('${inv.id}');setTimeout(()=>_printPdfModal(),400)"><i class="fa-solid fa-print fa-xs"></i></button>
+        ${remain>0?`<button class="btn bb bic bsm" title="تسجيل دفعة" onclick="DEBTS.openPayByInvoice('${inv.num}','${inv.id}')"><i class="fa-solid fa-plus fa-xs"></i></button>`:''}
+        ${liveStatus!=='ملغاة'?`<button class="btn br bic bsm" title="إلغاء" onclick="INVS.voidInvoice('${inv.id}')"><i class="fa-solid fa-ban fa-xs"></i></button>`:''}
+      </div>
+    </div>`;
+  },
+
+  // ── render day groups ──
+  _renderDailyGroups(days, reset){
+    const s    = getCurr();
+    const evts = EVENTS.all();
+    const invByDay = {};
+    const allInvs  = this._filteredInvs(evts);
+    allInvs.forEach(inv => {
+      const d = (inv.date||'').slice(0,10);
+      if(!invByDay[d]) invByDay[d] = [];
+      invByDay[d].push(inv);
+    });
+
+    const container = document.getElementById('invDailyGroups');
+    if(!container) return;
+    if(reset) container.innerHTML = '';
+
+    const visibleDays = days.slice(0, this._daysShown);
+    visibleDays.forEach(day => {
+      if(!reset && document.getElementById('invDay_' + day)) return; // already rendered
+      const items = invByDay[day] || [];
+      if(!items.length) return;
+      const total = items.reduce((s,i) => s + parseFloat(i.total||0), 0);
+      const div   = document.createElement('div');
+      div.id      = 'invDay_' + day;
+      div.className = 'card';
+      div.style.cssText = 'margin-bottom:10px;overflow:hidden;border-radius:12px';
+      div.innerHTML =
+        `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:rgba(59,130,246,.07);border-bottom:1px solid var(--bdr)">
+          <span style="font-weight:800;font-size:13px">📅 ${this._fmtDay(day)}</span>
+          <span style="font-size:12px;color:var(--muted)">${items.length} فاتورة · إجمالي ${total.toFixed(2)} ${s}</span>
+        </div>` +
+        items.map(inv => this._buildDayItem(inv, s, evts)).join('');
+      container.appendChild(div);
+    });
+  },
+
   // ── Disconnect and nullify the current observer ──
   _vsDisconnect(){
     if(this._vsObs){ this._vsObs.disconnect(); this._vsObs = null; }
@@ -10508,6 +10809,9 @@ const INVS = {
   },
 
   render(){
+    // §v1.1.357: init view mode on first render
+    if(!this._initDone){ this._initView(); this._initDone = true; }
+
     // Sync all invoice paid/remain/status from payment events before rendering
     try{ CALC.syncAllDebts(); }catch(_){}
     try{ CALC.syncAllInvoices(); }catch(_){}
@@ -10524,43 +10828,63 @@ const INVS = {
       <div class="kpi kr"><div class="ki"><i class="fa-solid fa-hand-holding-dollar"></i></div><div class="kv2">${invTotalDebt.toFixed(2)} ${s}</div><div class="klbl">إجمالي الديون المتبقية</div></div>
       <div class="kpi kg"><div class="ki"><i class="fa-solid fa-users"></i></div><div class="kv2">${invDebtorCount}</div><div class="klbl">عدد المدينين</div></div>`;
 
-    // ── Build full filtered dataset ──
-    const srch=UI.val('invSrch').toLowerCase(), type=UI.val('invType'), stat=UI.val('invStat'), df=UI.val('invDF'), dt=UI.val('invDT');
-    // §v1.1.292: customer filter — populate datalist once per render then apply filter
-    const custF = (document.getElementById('invCustFilter')?.value || '').trim();
-    const custFL = custF.toLowerCase();
-    const resetBtn = document.getElementById('invCustResetBtn');
-    if(resetBtn) resetBtn.style.display = custF ? 'inline-flex' : 'none';
-    INVS._populateCustDatalist();
-    // Resolve customer filter to a specific record (exact match on name or code)
-    const _custRec = custF ? DB.all('CUSTOMERS').find(c =>
-      (c.name||'').toLowerCase() === custFL || (c.code||'').toLowerCase() === custFL
-    ) : null;
-    this._vsRows = DB.all('INVOICES').sort((a,b)=>(b.created_at||'').localeCompare(a.created_at||'')).filter(i=>{
-      if(i.status==='ملغاة' && stat!=='ملغاة') return false;
-      if(srch&&!(i.num||'').toLowerCase().includes(srch)&&!(i.customer||'').toLowerCase().includes(srch)) return false;
-      if(type&&type!=='جميع الأنواع'&&i.type!==type) return false;
-      if(stat&&stat!=='جميع الحالات'&&i.status!==stat) return false;
-      if(df&&i.date<df) return false;
-      if(dt&&i.date>dt) return false;
-      // §v1.1.292: customer filter — AND-combined with all other filters
-      if(custF){
-        if(_custRec){
-          // Exact resolved customer: match by name, custCode, or legacy name fallback
-          if(!((i.customer||'').toLowerCase()===((_custRec.name)||'').toLowerCase() ||
-               (i.custCode||'').toLowerCase()===((_custRec.code)||'').toLowerCase()))
-            return false;
-        } else {
-          // Partial text fallback: match name or code substring
-          if(!((i.customer||'').toLowerCase().includes(custFL) ||
-               (i.custCode||'').toLowerCase().includes(custFL)))
-            return false;
-        }
-      }
-      return true;
-    });
+    // §v1.1.357: Update navigation UI
+    this._updateNav();
 
-    // ── §v1.1.183: Virtual scroll reset — always start from first batch ──
+    // ── View switching ──
+    const dailyView = document.getElementById('invDailyView');
+    const tableView = document.getElementById('invTableView');
+    if(dailyView) dailyView.style.display = this._viewMode === 'daily' ? '' : 'none';
+    if(tableView) tableView.style.display = this._viewMode === 'table' ? '' : 'none';
+
+    if(this._viewMode === 'daily'){
+      // ── DAILY VIEW ──
+      const evts    = EVENTS.all();
+      const allInvs = this._filteredInvs(evts);
+
+      // Group by day
+      const dayMap = {};
+      allInvs.forEach(inv => {
+        const d = (inv.date||'').slice(0,10);
+        if(!dayMap[d]) dayMap[d] = [];
+        dayMap[d].push(inv);
+      });
+      this._allDays = Object.keys(dayMap).sort((a,b) => b.localeCompare(a));
+
+      const emptyEl = document.getElementById('invDailyEmpty');
+      const lmWrap  = document.getElementById('invLoadMoreWrap');
+
+      if(!this._allDays.length){
+        if(emptyEl) emptyEl.style.display = '';
+        if(lmWrap)  lmWrap.style.display  = 'none';
+        const grp = document.getElementById('invDailyGroups');
+        if(grp) grp.innerHTML = '';
+        return;
+      }
+      if(emptyEl) emptyEl.style.display = 'none';
+
+      // Pagination
+      if(this._mode === 'day'){
+        this._daysShown = this._allDays.length; // single day — show all
+        if(lmWrap) lmWrap.style.display = 'none';
+      } else {
+        this._daysShown = Math.min(10, this._allDays.length); // first 10 days
+        if(lmWrap) lmWrap.style.display = this._allDays.length > 10 ? 'block' : 'none';
+      }
+      this._renderDailyGroups(this._allDays, true);
+      return;
+    }
+
+    // ── TABLE VIEW (classic virtual scroll) ──
+    // Build full filtered dataset using the new _filteredInvs
+    const _evts = EVENTS.all();
+    this._vsEvts = _evts;
+    this._vsRows = this._filteredInvs(_evts);
+
+    // §v1.1.357: also populate customer datalist for table view compatibility
+    INVS._populateCustDatalist();
+
+    // §v1.1.183: Virtual scroll reset
     this._vsDisconnect();
     this._vsCount = 0;
     const tb = document.getElementById('invTbody');
@@ -10572,14 +10896,11 @@ const INVS = {
       return;
     }
 
-    // Render first batch
-    const _evts = EVENTS.all(); // §v1.1.243 FIX#16: fetch once, reuse for all rows
-    this._vsEvts = _evts; // store for _vsAppend
     const firstBatch = this._vsRows.slice(0, this._vsBatch);
     tb.innerHTML = firstBatch.map(i => this._buildRow(i, s, _evts)).join('');
     this._vsCount = firstBatch.length;
     this._vsUpdateInfo();
-    this._vsAttach(); // attach observer only if more rows remain
+    this._vsAttach();
   },
   view(id){
     const inv=DB.all('INVOICES').find(i=>i.id===id); if(!inv) return;
@@ -12786,6 +13107,176 @@ const DEBTS = {
   _vsBatch: 100,
   _vsObs:   null,
 
+  // §v1.1.357: Daily view state
+  _mode:      'day',
+  _curDay:    null,
+  _payFilter: 'all',
+  _viewMode:  'daily',
+  _allDays:   [],
+  _daysShown: 0,
+  _initDone:  false,
+
+  _initView(){ this._viewMode = localStorage.getItem('_debtViewMode') || 'daily'; },
+  _today()   { return new Date().toISOString().slice(0,10); },
+  _fmtDay(d) {
+    try{ return new Date(d+'T00:00:00').toLocaleDateString('ar-SA',{day:'numeric',month:'long',year:'numeric'}); }
+    catch(_){ return d; }
+  },
+
+  dayNav(dir){
+    if(this._mode !== 'day') return;
+    const base = this._curDay || this._today();
+    const dt   = new Date(base+'T00:00:00');
+    dt.setDate(dt.getDate() + dir);
+    const next = dt.toISOString().slice(0,10);
+    if(next > this._today()) return;
+    this._curDay = next;
+    this.render();
+  },
+
+  setMode(mode){
+    this._mode = mode;
+    const ri = document.getElementById('debtRangeInputs');
+    if(ri) ri.style.display = mode === 'range' ? 'flex' : 'none';
+    this.render();
+  },
+
+  _applyRange(){ this._mode = 'range'; this.render(); },
+
+  setPayFilter(f){
+    this._payFilter = f;
+    ['debtPayAll','debtPayCash','debtPayPartial','debtPayDebt'].forEach(id=>{
+      const el = document.getElementById(id);
+      if(el){ el.className = 'btn '+((f==='all'&&id==='debtPayAll')||(f==='cash'&&id==='debtPayCash')||(f==='partial'&&id==='debtPayPartial')||(f==='debt'&&id==='debtPayDebt')?'act':'bgh'); }
+    });
+    this.render();
+  },
+
+  toggleView(){
+    this._viewMode = this._viewMode === 'daily' ? 'table' : 'daily';
+    localStorage.setItem('_debtViewMode', this._viewMode);
+    this.render();
+  },
+
+  loadMore(){
+    this._daysShown = Math.min(this._daysShown + 10, this._allDays.length);
+    this._renderDebtDailyGroups(this._allDays, false);
+    document.getElementById('debtLoadMoreWrap').style.display =
+      this._daysShown < this._allDays.length ? 'block' : 'none';
+  },
+
+  _updateNav(){
+    const today = this._today();
+    const cur   = this._curDay || today;
+    const isDay = this._mode === 'day';
+    const prev  = document.getElementById('debtPrevDay');
+    const next  = document.getElementById('debtNextDay');
+    if(prev) prev.style.opacity = isDay ? '1' : '0.3';
+    if(next){ next.style.opacity = isDay && cur < today ? '1' : '0.3'; next.disabled = !isDay || cur >= today; }
+    const label    = document.getElementById('debtDayLabel');
+    const subLabel = document.getElementById('debtDaySubLabel');
+    if(label){
+      if(this._mode==='all')   label.textContent = 'جميع الأيام';
+      else if(this._mode==='range') label.textContent = 'نطاق مخصص';
+      else label.textContent = cur === today ? 'اليوم' : this._fmtDay(cur);
+    }
+    if(subLabel) subLabel.textContent = this._mode==='day' ? this._fmtDay(cur) : '';
+    ['debtModeAll','debtModeRange'].forEach(id=>{
+      const el = document.getElementById(id);
+      if(el) el.className = 'btn '+((id==='debtModeAll'&&this._mode==='all')||(id==='debtModeRange'&&this._mode==='range')?'act':'bgh');
+    });
+    const vt = document.getElementById('debtViewToggle');
+    if(vt) vt.innerHTML = this._viewMode==='daily'
+      ? '<i class="fa-solid fa-table-list" style="margin-left:5px"></i>عرض جدول'
+      : '<i class="fa-solid fa-calendar-days" style="margin-left:5px"></i>عرض يومي';
+  },
+
+  _debtPayType(d, evts){
+    const {remain, totalPaid} = CALC.recalcDebtRemaining(d, evts);
+    if(remain <= 0) return 'cash';
+    if(totalPaid > 0) return 'partial';
+    return 'debt';
+  },
+
+  _filteredDebts(evts){
+    const today = this._today();
+    const srch  = (document.getElementById('debtSrch')?.value||'').toLowerCase();
+    const from  = this._mode==='day'   ? (this._curDay||today)
+                : this._mode==='range' ? (document.getElementById('debtRangeFrom')?.value||'') : '';
+    const to    = this._mode==='day'   ? (this._curDay||today)
+                : this._mode==='range' ? (document.getElementById('debtRangeTo')?.value||'') : '';
+    return DB.all('DEBTS')
+      .filter(d=>{
+        if(srch && !(d.customer||'').toLowerCase().includes(srch) && !(d.invNum||'').toLowerCase().includes(srch)) return false;
+        const dateStr = (d.created_at||d.date||'').slice(0,10);
+        if(from && dateStr < from) return false;
+        if(to   && dateStr > to)   return false;
+        const pt = this._debtPayType(d, evts);
+        if(this._payFilter==='cash'    && pt!=='cash')    return false;
+        if(this._payFilter==='partial' && pt!=='partial') return false;
+        if(this._payFilter==='debt'    && pt!=='debt')    return false;
+        return true;
+      })
+      .sort((a,b)=>(b.created_at||b.date||'').localeCompare(a.created_at||a.date||''));
+  },
+
+  _buildDebtDayItem(d, s, evts){
+    const {remain:liveRemain, totalPaidDisplay:livePaid} = CALC.recalcDebtRemaining(d, evts);
+    const pt  = this._debtPayType(d, evts);
+    const dot = pt==='cash' ? '🟢' : pt==='partial' ? '🔴' : '🟡';
+    const liveStatus = liveRemain===0 ? 'مسدد' : d.status==='متأخر' ? 'متأخر' : 'نشط';
+    const sb = liveStatus==='مسدد'?'bem':liveStatus==='متأخر'?'bro':'bgo';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--bdr);flex-wrap:wrap">
+      <span style="font-size:18px;flex-shrink:0">${dot}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:13px">${escapeHtml(d.customer)} ${d.invNum?`<span class="badge bmu" style="font-size:10px">${escapeHtml(d.invNum)}</span>`:''}</div>
+        <div style="font-size:11px;color:var(--muted)">مدفوع: ${livePaid.toFixed(2)} ${s}</div>
+      </div>
+      <div style="text-align:left;flex-shrink:0">
+        <div style="font-weight:800;font-size:14px;color:${liveRemain>0?'var(--red)':'var(--green)'}">${liveRemain.toFixed(2)} ${s}</div>
+        <div style="font-size:10px"><span class="badge ${sb}">${liveStatus}</span></div>
+      </div>
+      <div style="display:flex;gap:4px;flex-shrink:0">
+        ${liveRemain>0?`<button class="btn bb bsm" onclick="DEBTS.openPay('${d.id}')"><i class="fa-solid fa-plus fa-xs"></i></button>`:''}
+        <button class="btn br bsm" onclick="DEBTS.exportPDF('${d.id}')" title="كشف حساب"><i class="fa-solid fa-file-pdf fa-xs"></i></button>
+        ${d.invId?`<button class="btn bgh bsm" onclick="INVS.view('${d.invId}')" title="عرض الفاتورة"><i class="fa-solid fa-eye fa-xs"></i></button>`:''}
+      </div>
+    </div>`;
+  },
+
+  _renderDebtDailyGroups(days, reset){
+    const s    = getCurr();
+    const evts = EVENTS.all();
+    const allDebts = this._filteredDebts(evts);
+    const debtByDay = {};
+    allDebts.forEach(d=>{
+      const day = (d.created_at||d.date||'').slice(0,10);
+      if(!debtByDay[day]) debtByDay[day]=[];
+      debtByDay[day].push(d);
+    });
+    const container = document.getElementById('debtDailyGroups');
+    if(!container) return;
+    if(reset) container.innerHTML = '';
+    const visibleDays = days.slice(0, this._daysShown);
+    visibleDays.forEach(day=>{
+      if(!reset && document.getElementById('debtDay_'+day)) return;
+      const items = debtByDay[day]||[];
+      if(!items.length) return;
+      const total = items.reduce((sum,d)=>sum+parseFloat(d.total||0),0);
+      const div = document.createElement('div');
+      div.id = 'debtDay_'+day;
+      div.className = 'card';
+      div.style.cssText = 'margin-bottom:10px;overflow:hidden;border-radius:12px';
+      div.innerHTML =
+        `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:rgba(59,130,246,.07);border-bottom:1px solid var(--bdr)">
+          <span style="font-weight:800;font-size:13px">📅 ${this._fmtDay(day)}</span>
+          <span style="font-size:12px;color:var(--muted)">${items.length} دين · إجمالي ${total.toFixed(2)} ${s}</span>
+        </div>` +
+        items.map(d=>this._buildDebtDayItem(d,s,evts)).join('');
+      container.appendChild(div);
+    });
+  },
+
   _vsDisconnect(){
     if(this._vsObs){ this._vsObs.disconnect(); this._vsObs = null; }
   },
@@ -12860,6 +13351,7 @@ const DEBTS = {
   },
 
   render(){
+    if(!this._initDone){ this._initView(); this._initDone = true; }
     const s=getCurr();
     // §FIX: Migrate legacy debt records first (safe no-op on already-migrated records)
     try{ CALC.migrateDebtTotals(); }catch(_){}
@@ -12905,7 +13397,46 @@ const DEBTS = {
 
     const alertEl=document.getElementById('debtsAlerts'); if(alertEl) alertEl.innerHTML=over>0?`<div class="al alw"><i class="fa-solid fa-triangle-exclamation"></i><span>${over} عميل ديون متأخرة بإجمالي ${_fromCents(debts.filter(d=>d.status==='متأخر').reduce((a,d)=>a+_toCents(d.remain||0),0)).toFixed(2)} ${s}</span></div>`:'';
 
-    // ── Build full filtered dataset ──
+    // §v1.1.357: Update nav UI
+    this._updateNav();
+
+    // ── View switching ──
+    const dailyView = document.getElementById('debtDailyView');
+    const tableView = document.getElementById('debtTableView');
+    if(dailyView) dailyView.style.display = this._viewMode === 'daily' ? '' : 'none';
+    if(tableView) tableView.style.display = this._viewMode === 'table' ? '' : 'none';
+
+    if(this._viewMode === 'daily'){
+      const allD = this._filteredDebts(_evts);
+      const dayMap = {};
+      allD.forEach(d=>{
+        const day = (d.created_at||d.date||'').slice(0,10);
+        if(!dayMap[day]) dayMap[day]=[];
+        dayMap[day].push(d);
+      });
+      this._allDays = Object.keys(dayMap).sort((a,b)=>b.localeCompare(a));
+      const emptyEl = document.getElementById('debtDailyEmpty');
+      const lmWrap  = document.getElementById('debtLoadMoreWrap');
+      if(!this._allDays.length){
+        if(emptyEl) emptyEl.style.display='';
+        if(lmWrap)  lmWrap.style.display='none';
+        const grp = document.getElementById('debtDailyGroups');
+        if(grp) grp.innerHTML='';
+        return;
+      }
+      if(emptyEl) emptyEl.style.display='none';
+      if(this._mode==='day'){
+        this._daysShown = this._allDays.length;
+        if(lmWrap) lmWrap.style.display='none';
+      } else {
+        this._daysShown = Math.min(10, this._allDays.length);
+        if(lmWrap) lmWrap.style.display = this._allDays.length>10?'block':'none';
+      }
+      this._renderDebtDailyGroups(this._allDays, true);
+      return;
+    }
+
+    // ── TABLE VIEW ──
     const srch=UI.val('debtSrch').toLowerCase(), stat=UI.val('debtStatF');
     this._vsRows = debts.filter(d=>{
       if(srch){
